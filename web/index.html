@@ -3,13 +3,15 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>GoResearch · Phase 1 Chat</title>
+  <title>GoResearch · Phase 2</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
   <style>
     :root {
       color-scheme: light dark;
       --bg: #0b1020;
       --bg-2: #0d1330;
       --panel: #131a31;
+      --panel-2: #182142;
       --border: #233056;
       --text: #e8ecf7;
       --muted: #8b96b8;
@@ -17,6 +19,8 @@
       --accent-soft: rgba(124, 156, 255, 0.15);
       --user: #2a3768;
       --assistant: #1a2244;
+      --success: #65d39c;
+      --warning: #f5c065;
       --danger: #ff6b6b;
     }
     * { box-sizing: border-box; }
@@ -32,29 +36,27 @@
     }
     .app {
       width: 100%;
-      max-width: 880px;
+      max-width: 980px;
       height: 100vh;
       display: flex;
       flex-direction: column;
-      padding: 0 16px;
+      padding: 0 18px;
     }
+
+    /* ===== Header / Tabs ===== */
     header {
-      padding: 18px 4px 12px;
+      padding: 18px 4px 0;
       border-bottom: 1px solid var(--border);
       display: flex;
-      align-items: center;
+      align-items: flex-end;
       justify-content: space-between;
+      gap: 10px;
       flex-shrink: 0;
     }
-    header .title h1 {
+    .brand h1 {
       margin: 0;
       font-size: 18px;
       letter-spacing: 0.4px;
-    }
-    header .title p {
-      margin: 2px 0 0;
-      font-size: 12px;
-      color: var(--muted);
     }
     .badge {
       display: inline-block;
@@ -68,13 +70,48 @@
       letter-spacing: 0.4px;
       vertical-align: 2px;
     }
-    .actions {
-      display: flex;
-      gap: 8px;
-      align-items: center;
+    .brand p {
+      margin: 2px 0 12px;
+      font-size: 12px;
+      color: var(--muted);
     }
+    .tabs {
+      display: flex;
+      gap: 4px;
+    }
+    .tab {
+      padding: 9px 16px;
+      border: 1px solid var(--border);
+      border-bottom: none;
+      border-radius: 8px 8px 0 0;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+    .tab:hover { color: var(--text); background: var(--panel); }
+    .tab.active {
+      background: var(--panel);
+      color: var(--text);
+      border-color: var(--border);
+      box-shadow: 0 1px 0 var(--panel);
+    }
+    .tab .model {
+      font-size: 11px;
+      color: var(--muted);
+      margin-left: 8px;
+      font-weight: normal;
+    }
+
+    /* ===== View switching ===== */
+    .view { display: none; flex-direction: column; flex: 1; min-height: 0; }
+    .view.active { display: flex; }
+
+    /* ===== Buttons / inputs (shared) ===== */
     .btn {
-      padding: 7px 14px;
+      padding: 8px 14px;
       border-radius: 8px;
       border: 1px solid var(--border);
       background: transparent;
@@ -91,26 +128,33 @@
       font-weight: 600;
     }
     .btn.primary:disabled { opacity: 0.55; cursor: progress; }
+    textarea, input[type=text] {
+      width: 100%;
+      padding: 11px 14px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--bg-2);
+      color: var(--text);
+      font: inherit;
+      font-size: 14.5px;
+      line-height: 1.55;
+      outline: none;
+    }
+    textarea:focus, input[type=text]:focus { border-color: var(--accent); }
+    textarea { min-height: 40px; max-height: 200px; resize: none; }
 
-    .messages {
+    /* ===== Chat view (Phase 1, kept) ===== */
+    #chat-view .messages {
       flex: 1;
       overflow-y: auto;
-      padding: 24px 4px;
+      padding: 22px 4px;
       display: flex;
       flex-direction: column;
       gap: 14px;
     }
     .messages::-webkit-scrollbar { width: 8px; }
-    .messages::-webkit-scrollbar-thumb {
-      background: var(--border);
-      border-radius: 4px;
-    }
-
-    .msg {
-      display: flex;
-      gap: 10px;
-      align-items: flex-start;
-    }
+    .messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    .msg { display: flex; gap: 10px; align-items: flex-start; }
     .msg.user { justify-content: flex-end; }
     .bubble {
       max-width: 78%;
@@ -122,33 +166,21 @@
       word-break: break-word;
       border: 1px solid var(--border);
     }
-    .msg.user .bubble {
-      background: var(--user);
-      border-color: transparent;
-      border-top-right-radius: 4px;
+    .msg.user .bubble { background: var(--user); border-color: transparent; border-top-right-radius: 4px; }
+    .msg.assistant .bubble { background: var(--assistant); border-top-left-radius: 4px; }
+    .msg.assistant .bubble.error { border-color: var(--danger); color: #ffb4b4; }
+    .role { font-size: 11px; color: var(--muted); margin-bottom: 4px; letter-spacing: 0.5px; text-transform: uppercase; }
+    .typing-dot {
+      display: inline-block;
+      width: 6px; height: 6px;
+      margin-left: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      animation: blink 1s infinite ease-in-out;
     }
-    .msg.assistant .bubble {
-      background: var(--assistant);
-      border-top-left-radius: 4px;
-    }
-    .msg.assistant .bubble.error {
-      border-color: var(--danger);
-      color: #ffb4b4;
-    }
-    .role {
-      font-size: 11px;
-      color: var(--muted);
-      margin-bottom: 4px;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-    }
-    .meta-line {
-      font-size: 11px;
-      color: var(--muted);
-      margin-top: 4px;
-    }
+    @keyframes blink { 0%, 100% { opacity: 0.2; } 50% { opacity: 1; } }
 
-    .composer {
+    #chat-view .composer {
       padding: 12px 4px 18px;
       border-top: 1px solid var(--border);
       flex-shrink: 0;
@@ -164,66 +196,221 @@
       transition: border-color 0.15s ease;
     }
     .composer-inner:focus-within { border-color: var(--accent); }
-    textarea {
+    .composer-inner textarea {
       flex: 1;
-      min-height: 40px;
-      max-height: 200px;
       padding: 6px 4px;
       background: transparent;
       border: none;
-      color: var(--text);
-      font: inherit;
-      font-size: 14.5px;
-      line-height: 1.55;
-      resize: none;
-      outline: none;
+      min-height: 40px;
     }
     .send-status {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      justify-content: space-between;
+      display: flex; gap: 10px; align-items: center; justify-content: space-between;
       padding: 4px 4px 0;
+      font-size: 11px; color: var(--muted);
+    }
+
+    /* ===== Research view ===== */
+    #research-view {
+      gap: 14px;
+      padding: 18px 4px 24px;
+      overflow-y: auto;
+    }
+    #research-view::-webkit-scrollbar { width: 8px; }
+    #research-view::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+    }
+    .card h3 {
+      margin: 0 0 10px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .card h3 .count {
+      background: var(--accent-soft);
+      color: var(--accent);
+      padding: 1px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      letter-spacing: 0.3px;
+    }
+
+    .ask-row {
+      display: flex; gap: 10px; align-items: stretch;
+    }
+    .ask-row textarea { flex: 1; min-height: 56px; }
+    .ask-row .btn.primary { align-self: stretch; padding-left: 22px; padding-right: 22px; }
+
+    .meta-row {
+      display: flex; flex-wrap: wrap; gap: 14px;
+      font-size: 12px; color: var(--muted);
+    }
+    .meta-row .key { color: var(--text); font-weight: 600; }
+
+    #plan-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 10px;
+    }
+    .subtask {
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      cursor: pointer;
+      transition: border-color 0.15s ease;
+    }
+    .subtask:hover { border-color: var(--accent); }
+    .subtask-head {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 12px;
+    }
+    .subtask-id {
+      background: var(--accent-soft);
+      color: var(--accent);
+      padding: 1px 7px;
+      border-radius: 999px;
+      font-weight: 600;
+    }
+    .subtask-state {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-left: auto;
+      font-size: 11px;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .dot.pending { background: var(--muted); }
+    .dot.running { background: var(--accent); animation: blink 1s infinite ease-in-out; }
+    .dot.done { background: var(--success); }
+    .dot.failed { background: var(--danger); }
+    .subtask-question {
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--text);
+    }
+    .subtask-elapsed {
       font-size: 11px;
       color: var(--muted);
     }
-    .typing-dot {
-      display: inline-block;
-      width: 6px;
-      height: 6px;
-      margin-left: 6px;
-      border-radius: 50%;
-      background: var(--accent);
-      animation: blink 1s infinite ease-in-out;
+
+    #findings-panels {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
     }
-    @keyframes blink { 0%, 100% { opacity: 0.2; } 50% { opacity: 1; } }
+    .finding {
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .finding-head {
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      cursor: pointer;
+      user-select: none;
+      font-size: 13.5px;
+    }
+    .finding-head:hover { background: rgba(124, 156, 255, 0.05); }
+    .finding-head .arrow {
+      width: 12px;
+      transition: transform 0.15s ease;
+      color: var(--muted);
+    }
+    .finding.open .arrow { transform: rotate(90deg); }
+    .finding-body {
+      display: none;
+      padding: 4px 16px 16px;
+      border-top: 1px solid var(--border);
+      font-size: 14px;
+      line-height: 1.65;
+    }
+    .finding.open .finding-body { display: block; }
+    .finding-body .citations {
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px dashed var(--border);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .finding-body .citations a { color: var(--accent); text-decoration: none; }
+    .finding-body .citations a:hover { text-decoration: underline; }
+
+    #report {
+      min-height: 80px;
+      font-size: 15px;
+      line-height: 1.75;
+    }
+    #report.placeholder {
+      color: var(--muted);
+      font-style: italic;
+    }
+    #report h1, #report h2, #report h3 { color: var(--text); margin: 1.2em 0 0.4em; }
+    #report h1 { font-size: 22px; }
+    #report h2 { font-size: 18px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+    #report h3 { font-size: 15px; color: var(--muted); }
+    #report ul, #report ol { padding-left: 22px; }
+    #report li { margin: 4px 0; }
+    #report code {
+      background: var(--bg-2);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+    #report pre {
+      background: var(--bg-2);
+      padding: 12px 14px;
+      border-radius: 8px;
+      overflow-x: auto;
+      border: 1px solid var(--border);
+    }
+    #report a { color: var(--accent); text-decoration: none; }
+    #report a:hover { text-decoration: underline; }
+    #report blockquote {
+      border-left: 3px solid var(--accent);
+      padding: 0 12px;
+      margin: 10px 0;
+      color: var(--muted);
+    }
 
     .empty {
       color: var(--muted);
       text-align: center;
-      margin-top: 18vh;
+      padding: 40px 0;
       font-size: 14px;
     }
-    .empty h2 {
-      margin: 0 0 8px;
-      font-size: 18px;
-      color: var(--text);
-      font-weight: 600;
-    }
+
     .examples {
       display: flex;
       flex-wrap: wrap;
-      justify-content: center;
       gap: 8px;
-      margin-top: 14px;
+      margin-top: 10px;
     }
     .example {
-      padding: 7px 12px;
+      padding: 6px 12px;
       border-radius: 999px;
       border: 1px solid var(--border);
-      background: var(--panel);
+      background: var(--bg-2);
       color: var(--text);
-      font-size: 13px;
+      font-size: 12.5px;
       cursor: pointer;
     }
     .example:hover { border-color: var(--accent); color: var(--accent); }
@@ -232,92 +419,153 @@
 <body>
   <div class="app">
     <header>
-      <div class="title">
-        <h1>GoResearch <span class="badge">Phase 1</span></h1>
-        <p>Hertz + Eino · 多轮会话 · SSE 流式</p>
+      <div class="brand">
+        <h1>GoResearch <span class="badge">Phase 2</span></h1>
+        <p>Hertz + Eino · 多 Agent 协作 · DAG 调度 · SSE 流式</p>
       </div>
-      <div class="actions">
-        <span id="model" class="meta-line"></span>
-        <button id="new-chat" class="btn">新建会话</button>
+      <div class="tabs">
+        <button class="tab active" data-view="chat">Chat<span class="model" id="model-chat"></span></button>
+        <button class="tab" data-view="research">Research</button>
       </div>
     </header>
 
-    <div id="messages" class="messages">
-      <div id="empty" class="empty">
-        <h2>开始一段对话</h2>
-        <div>会话内的所有上下文都会随每条消息一起带给模型。</div>
-        <div class="examples">
-          <button class="example">用三段话讲清楚 Raft 的 leader election</button>
-          <button class="example">写一个 Go 的令牌桶限流器示例</button>
-          <button class="example">解释一下 Go 的 GMP 调度模型</button>
+    <!-- =========================== CHAT VIEW =========================== -->
+    <section id="chat-view" class="view active">
+      <div id="chat-messages" class="messages">
+        <div id="chat-empty" class="empty">
+          <div style="font-size:18px;color:var(--text);font-weight:600;margin-bottom:6px;">开始一段对话</div>
+          <div>同一标签页内的多轮上下文会带给模型。Research 模式在右上角切换。</div>
         </div>
       </div>
-    </div>
+      <div class="composer">
+        <div class="composer-inner">
+          <textarea id="chat-input" placeholder="问点什么…  Enter 发送，Shift+Enter 换行" rows="1"></textarea>
+          <button id="chat-send" class="btn primary">发送</button>
+        </div>
+        <div class="send-status">
+          <span id="chat-status">就绪</span>
+          <span id="chat-counter"></span>
+        </div>
+      </div>
+    </section>
 
-    <div class="composer">
-      <div class="composer-inner">
-        <textarea id="input"
-          placeholder="问点什么…  Enter 发送，Shift+Enter 换行"
-          rows="1"></textarea>
-        <button id="send" class="btn primary">发送</button>
+    <!-- ========================= RESEARCH VIEW ========================= -->
+    <section id="research-view" class="view">
+      <div class="card">
+        <h3>研究问题</h3>
+        <div class="ask-row">
+          <textarea id="research-input" placeholder="例如：比较 Go goroutine 与 OS 线程，从内存、调度、使用场景三个角度展开" rows="2"></textarea>
+          <button id="research-go" class="btn primary">开始研究</button>
+        </div>
+        <div class="examples" id="research-examples">
+          <button class="example">比较 Go goroutine 与 OS 线程，从内存、调度、使用场景三个角度展开</button>
+          <button class="example">Raft 协议是怎么解决 split-brain 的？请给出关键步骤</button>
+          <button class="example">为什么 Kubernetes 的 controller manager 是 leader-elect 单实例工作？</button>
+        </div>
       </div>
-      <div class="send-status">
-        <span id="status">就绪</span>
-        <span id="counter"></span>
+
+      <div class="card">
+        <h3>研究计划 <span class="count" id="plan-count">—</span></h3>
+        <div id="plan-list">
+          <div class="empty">尚未开始。提交一个问题，Planner 会先拆解出 2-5 个并发可调度的子任务。</div>
+        </div>
       </div>
-    </div>
+
+      <div class="card" id="findings-card" style="display:none;">
+        <h3>子任务发现 <span class="count" id="findings-count">0</span></h3>
+        <div id="findings-panels"></div>
+      </div>
+
+      <div class="card">
+        <h3>研究报告 <span class="count" id="report-meta">—</span></h3>
+        <div id="report" class="placeholder">报告将在所有子任务完成后由 Writer 流式生成。</div>
+      </div>
+    </section>
   </div>
 
   <script>
-    const $messages = document.getElementById("messages");
-    const $empty = document.getElementById("empty");
-    const $input = document.getElementById("input");
-    const $send = document.getElementById("send");
-    const $newChat = document.getElementById("new-chat");
-    const $status = document.getElementById("status");
-    const $counter = document.getElementById("counter");
-    const $model = document.getElementById("model");
-
-    // 会话内记忆：每条消息发送时都把历史一起带上。Phase 3 会替换为
-    // 后端持久化会话 + pgvector 长期记忆。
-    const history = [];
-    let inFlight = false;
-
+    // ===================== Common: model badge =========================
     fetch("/healthz").then(r => r.json())
-      .then(j => { $model.textContent = j.model ? `model: ${j.model}` : ""; })
-      .catch(() => {});
+      .then(j => {
+        if (j.model) document.getElementById("model-chat").textContent = " · " + j.model;
+      }).catch(() => {});
 
-    document.querySelectorAll(".example").forEach(el => {
-      el.addEventListener("click", () => {
-        $input.value = el.textContent;
-        $input.focus();
-        autoGrow();
+    // ===================== Tab switching ==============================
+    document.querySelectorAll(".tab").forEach(t => {
+      t.addEventListener("click", () => {
+        document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
+        const target = t.dataset.view;
+        document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === target + "-view"));
       });
     });
 
-    function autoGrow() {
-      $input.style.height = "auto";
-      $input.style.height = Math.min($input.scrollHeight, 200) + "px";
+    // ===================== Marked init (Markdown render) ==============
+    if (window.marked) {
+      marked.setOptions({ breaks: true, gfm: true });
     }
-    $input.addEventListener("input", autoGrow);
-    $input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-        e.preventDefault();
-        send();
-      }
-    });
-    $send.addEventListener("click", send);
-    $newChat.addEventListener("click", () => {
-      if (inFlight) return;
-      history.length = 0;
-      $messages.querySelectorAll(".msg").forEach(n => n.remove());
-      $empty.style.display = "";
-      $status.textContent = "已清空会话";
-      $counter.textContent = "";
-    });
+    function renderMd(text) {
+      if (window.marked) return marked.parse(text);
+      // Fallback: very small replacements so the report still reads OK if CDN blocked.
+      return text
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/^### (.+)$/gm, "<h3>$1</h3>")
+        .replace(/^## (.+)$/gm, "<h2>$1</h2>")
+        .replace(/^# (.+)$/gm, "<h1>$1</h1>")
+        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+        .replace(/\n/g, "<br>");
+    }
 
-    function appendMessage(role, text) {
-      $empty.style.display = "none";
+    // ===================== Shared SSE parser ==========================
+    async function streamSSE(url, body, onEvent) {
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
+        body: JSON.stringify(body),
+      });
+      if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status} ${resp.statusText}`);
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let idx;
+        while ((idx = buffer.indexOf("\n\n")) !== -1) {
+          const raw = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          let event = "message", data = "";
+          for (const line of raw.split("\n")) {
+            if (line.startsWith("event:")) event = line.slice(6).trim();
+            else if (line.startsWith("data:")) data += line.slice(5).trim();
+          }
+          if (data) onEvent(event, data);
+        }
+      }
+    }
+
+    // ===================== Chat view (Phase 1, polished) ==============
+    const chatHistory = [];
+    let chatInFlight = false;
+    const $cinput = document.getElementById("chat-input");
+    const $csend = document.getElementById("chat-send");
+    const $cmsgs = document.getElementById("chat-messages");
+    const $cempty = document.getElementById("chat-empty");
+    const $cstatus = document.getElementById("chat-status");
+    const $ccounter = document.getElementById("chat-counter");
+
+    function chatGrow() {
+      $cinput.style.height = "auto";
+      $cinput.style.height = Math.min($cinput.scrollHeight, 200) + "px";
+    }
+    $cinput.addEventListener("input", chatGrow);
+    $cinput.addEventListener("keydown", e => {
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); chatSend(); }
+    });
+    $csend.addEventListener("click", chatSend);
+
+    function chatAppend(role, text) {
+      $cempty.style.display = "none";
       const wrap = document.createElement("div");
       wrap.className = "msg " + role;
       const col = document.createElement("div");
@@ -327,113 +575,232 @@
       const b = document.createElement("div");
       b.className = "bubble";
       b.textContent = text;
-      col.appendChild(r);
-      col.appendChild(b);
-      wrap.appendChild(col);
-      $messages.appendChild(wrap);
-      $messages.scrollTop = $messages.scrollHeight;
+      col.append(r, b);
+      wrap.append(col);
+      $cmsgs.appendChild(wrap);
+      $cmsgs.scrollTop = $cmsgs.scrollHeight;
       return b;
     }
 
-    async function send() {
-      if (inFlight) return;
-      const message = $input.value.trim();
+    async function chatSend() {
+      if (chatInFlight) return;
+      const message = $cinput.value.trim();
       if (!message) return;
-
-      appendMessage("user", message);
-      const $bubble = appendMessage("assistant", "");
-      $bubble.innerHTML = '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
-
-      const payload = { message, history: history.slice() };
-      history.push({ role: "user", content: message });
-
-      $input.value = "";
-      autoGrow();
-      inFlight = true;
-      $send.disabled = true;
-      $newChat.disabled = true;
-      $status.textContent = "请求中…";
-      $counter.textContent = "";
+      chatAppend("user", message);
+      const $b = chatAppend("assistant", "");
+      $b.innerHTML = '<span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span>';
+      const payload = { message, history: chatHistory.slice() };
+      chatHistory.push({ role: "user", content: message });
+      $cinput.value = ""; chatGrow();
+      chatInFlight = true; $csend.disabled = true;
+      $cstatus.textContent = "请求中…"; $ccounter.textContent = "";
 
       const startedAt = performance.now();
-      let firstTokenAt = 0;
-      let chars = 0;
-      let assistantText = "";
-
+      let firstTokenAt = 0, chars = 0, assistantText = "";
       try {
-        const resp = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
-          body: JSON.stringify(payload)
-        });
-        if (!resp.ok || !resp.body) {
-          renderError($bubble, `请求失败：${resp.status} ${resp.statusText}`);
-          return;
-        }
-
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-
-          let idx;
-          while ((idx = buffer.indexOf("\n\n")) !== -1) {
-            const raw = buffer.slice(0, idx);
-            buffer = buffer.slice(idx + 2);
-            handleEvent(raw);
+        await streamSSE("/api/chat", { message, history: payload.history }, (event, data) => {
+          if (event === "token") {
+            try {
+              const obj = JSON.parse(data);
+              if (!firstTokenAt) { firstTokenAt = performance.now(); $b.textContent = ""; }
+              assistantText += obj.delta || "";
+              chars += (obj.delta || "").length;
+              $b.textContent = assistantText;
+              $cmsgs.scrollTop = $cmsgs.scrollHeight;
+            } catch (_) {}
+          } else if (event === "error") {
+            $b.textContent = `[server error] ${data}`;
+            $b.classList.add("error");
           }
-        }
-
-        if (assistantText) {
-          history.push({ role: "assistant", content: assistantText });
-        }
+        });
+        if (assistantText) chatHistory.push({ role: "assistant", content: assistantText });
         const elapsed = Math.round(performance.now() - startedAt);
         const ttft = firstTokenAt ? Math.round(firstTokenAt - startedAt) : -1;
-        $status.textContent = `完成 · 历史 ${history.length} 条`;
-        $counter.textContent = `首 token ${ttft}ms · 总耗时 ${elapsed}ms · 输出 ${chars} 字`;
+        $cstatus.textContent = `完成 · 历史 ${chatHistory.length} 条`;
+        $ccounter.textContent = `首 token ${ttft}ms · 总耗时 ${elapsed}ms · 输出 ${chars} 字`;
       } catch (err) {
-        renderError($bubble, `[stream error] ${err}`);
+        $b.textContent += `\n[stream error] ${err}`;
+        $b.classList.add("error");
+        $cstatus.textContent = "出错";
       } finally {
-        inFlight = false;
-        $send.disabled = false;
-        $newChat.disabled = false;
-      }
-
-      function handleEvent(raw) {
-        const lines = raw.split("\n");
-        let event = "message";
-        let data = "";
-        for (const line of lines) {
-          if (line.startsWith("event:")) event = line.slice(6).trim();
-          else if (line.startsWith("data:")) data += line.slice(5).trim();
-        }
-        if (event === "token") {
-          try {
-            const obj = JSON.parse(data);
-            if (!firstTokenAt) {
-              firstTokenAt = performance.now();
-              $bubble.textContent = "";
-            }
-            assistantText += obj.delta || "";
-            chars += (obj.delta || "").length;
-            $bubble.textContent = assistantText;
-            $messages.scrollTop = $messages.scrollHeight;
-          } catch (_) { /* ignore */ }
-        } else if (event === "error") {
-          renderError($bubble, `[server error] ${data}`);
-        }
-      }
-
-      function renderError(bubble, text) {
-        bubble.textContent = text;
-        bubble.classList.add("error");
-        $status.textContent = "出错";
+        chatInFlight = false;
+        $csend.disabled = false;
       }
     }
+
+    // ===================== Research view ==============================
+    const $rinput = document.getElementById("research-input");
+    const $rgo = document.getElementById("research-go");
+    const $planList = document.getElementById("plan-list");
+    const $planCount = document.getElementById("plan-count");
+    const $findingsCard = document.getElementById("findings-card");
+    const $findingsPanels = document.getElementById("findings-panels");
+    const $findingsCount = document.getElementById("findings-count");
+    const $report = document.getElementById("report");
+    const $reportMeta = document.getElementById("report-meta");
+    let researchInFlight = false;
+
+    document.querySelectorAll("#research-examples .example").forEach(el => {
+      el.addEventListener("click", () => { $rinput.value = el.textContent; $rinput.focus(); });
+    });
+    $rgo.addEventListener("click", researchStart);
+    $rinput.addEventListener("keydown", e => {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); researchStart(); }
+    });
+
+    function resetResearch() {
+      $planList.innerHTML = "";
+      $planCount.textContent = "—";
+      $findingsCard.style.display = "none";
+      $findingsPanels.innerHTML = "";
+      $findingsCount.textContent = "0";
+      $report.textContent = "Planner 正在规划…";
+      $report.classList.add("placeholder");
+      $reportMeta.textContent = "—";
+    }
+
+    function makeSubtaskCard(st) {
+      const card = document.createElement("div");
+      card.className = "subtask";
+      card.dataset.id = st.id;
+      card.innerHTML = `
+        <div class="subtask-head">
+          <span class="subtask-id">${escapeHtml(st.id)}</span>
+          <span class="subtask-state"><span class="dot pending"></span><span class="state-label">等待</span></span>
+        </div>
+        <div class="subtask-question">${escapeHtml(st.question)}</div>
+        <div class="subtask-elapsed"></div>
+      `;
+      card.addEventListener("click", () => {
+        const f = document.querySelector(`.finding[data-id="${st.id}"]`);
+        if (f) {
+          f.classList.add("open");
+          f.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      });
+      return card;
+    }
+
+    function setSubtaskState(id, state, label, elapsedMs) {
+      const card = document.querySelector(`.subtask[data-id="${id}"]`);
+      if (!card) return;
+      card.querySelector(".dot").className = "dot " + state;
+      card.querySelector(".state-label").textContent = label;
+      if (elapsedMs !== undefined) {
+        card.querySelector(".subtask-elapsed").textContent = `耗时 ${elapsedMs}ms`;
+      }
+    }
+
+    function appendFinding(payload) {
+      $findingsCard.style.display = "";
+      const wrap = document.createElement("div");
+      wrap.className = "finding";
+      wrap.dataset.id = payload.id;
+      const head = document.createElement("div");
+      head.className = "finding-head";
+      head.innerHTML = `
+        <span class="arrow">▶</span>
+        <span class="subtask-id">${escapeHtml(payload.id)}</span>
+        <span>${escapeHtml(payload.question)}</span>
+        <span class="subtask-state" style="margin-left:auto;"><span class="dot done"></span><span>${payload.elapsed_ms}ms</span></span>
+      `;
+      head.addEventListener("click", () => wrap.classList.toggle("open"));
+      const body = document.createElement("div");
+      body.className = "finding-body";
+      body.innerHTML = renderMd(payload.findings || "");
+      if (Array.isArray(payload.citations) && payload.citations.length) {
+        const cites = document.createElement("div");
+        cites.className = "citations";
+        cites.innerHTML = "<strong>引用：</strong><br>" + payload.citations.map(c =>
+          `[${c.index}] <a href="${escapeAttr(c.url)}" target="_blank" rel="noopener">${escapeHtml(c.title || c.url)}</a>`
+        ).join("<br>");
+        body.appendChild(cites);
+      }
+      wrap.append(head, body);
+      $findingsPanels.appendChild(wrap);
+      $findingsCount.textContent = $findingsPanels.children.length;
+    }
+
+    let researchMarkdown = "";
+    let researchRenderRaf = 0;
+    function scheduleReportRender() {
+      if (researchRenderRaf) return;
+      researchRenderRaf = requestAnimationFrame(() => {
+        researchRenderRaf = 0;
+        $report.innerHTML = renderMd(researchMarkdown);
+      });
+    }
+
+    async function researchStart() {
+      if (researchInFlight) return;
+      const question = $rinput.value.trim();
+      if (!question) return;
+      researchInFlight = true;
+      $rgo.disabled = true;
+      resetResearch();
+
+      const startedAt = performance.now();
+      let firstTokenAt = 0, chars = 0;
+      researchMarkdown = "";
+      const subtaskAttempts = {};
+
+      try {
+        await streamSSE("/api/research", { question }, (event, data) => {
+          let payload = {};
+          try { payload = JSON.parse(data); } catch (_) {}
+
+          if (event === "plan") {
+            $planList.innerHTML = "";
+            (payload.subtasks || []).forEach(st => $planList.appendChild(makeSubtaskCard(st)));
+            $planCount.textContent = (payload.subtasks || []).length;
+
+          } else if (event === "node_started") {
+            subtaskAttempts[payload.id] = payload.attempt;
+            const label = payload.attempt > 1 ? `重试 #${payload.attempt}` : "进行中";
+            setSubtaskState(payload.id, "running", label);
+
+          } else if (event === "node_finished") {
+            setSubtaskState(payload.id, "done", "完成", payload.elapsed_ms);
+            appendFinding(payload);
+
+          } else if (event === "node_failed") {
+            setSubtaskState(payload.id, "failed", "失败");
+
+          } else if (event === "writer_token") {
+            if (!firstTokenAt) {
+              firstTokenAt = performance.now();
+              $report.classList.remove("placeholder");
+              $report.textContent = "";
+            }
+            researchMarkdown += payload.delta || "";
+            chars += (payload.delta || "").length;
+            scheduleReportRender();
+
+          } else if (event === "done") {
+            const total = performance.now() - startedAt;
+            const ttwt = firstTokenAt ? Math.round(firstTokenAt - startedAt) : -1;
+            $reportMeta.textContent = `${payload.chars} 字 · 首 writer token ${ttwt}ms · 总耗时 ${Math.round(total)}ms`;
+            $report.innerHTML = renderMd(researchMarkdown);
+
+          } else if (event === "error") {
+            $report.classList.remove("placeholder");
+            $report.innerHTML = `<div style="color:var(--danger)"><strong>错误：</strong>${escapeHtml(JSON.stringify(payload))}</div>`;
+          }
+        });
+      } catch (err) {
+        $report.classList.remove("placeholder");
+        $report.innerHTML = `<div style="color:var(--danger)">stream error: ${escapeHtml(String(err))}</div>`;
+      } finally {
+        researchInFlight = false;
+        $rgo.disabled = false;
+      }
+    }
+
+    function escapeHtml(s) {
+      return String(s ?? "")
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+    function escapeAttr(s) { return escapeHtml(s).replace(/"/g, "&quot;"); }
   </script>
 </body>
 </html>
