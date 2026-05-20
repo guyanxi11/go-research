@@ -39,3 +39,9 @@ logs/
 # Local data
 data/
 tmp/
+
+# Runtime artefacts
+server.pid
+server.out.log
+server.err.log
+*.hertz.gz
