@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GoResearch · Phase 1 Demo</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #0b1020;
+      --panel: #131a31;
+      --border: #233056;
+      --text: #e8ecf7;
+      --muted: #8b96b8;
+      --accent: #7c9cff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: linear-gradient(160deg, #0b1020 0%, #131a31 100%);
+      color: var(--text);
+      display: flex;
+      justify-content: center;
+    }
+    main {
+      width: 100%;
+      max-width: 820px;
+      padding: 32px 24px 120px;
+    }
+    header h1 {
+      margin: 0 0 4px;
+      font-size: 22px;
+      letter-spacing: 0.4px;
+    }
+    header p {
+      margin: 0 0 24px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px 20px;
+      margin-bottom: 16px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+    }
+    .panel h2 {
+      margin: 0 0 10px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    textarea {
+      width: 100%;
+      min-height: 88px;
+      padding: 12px 14px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #0d1330;
+      color: var(--text);
+      font-size: 14px;
+      font-family: inherit;
+      resize: vertical;
+      outline: none;
+    }
+    textarea:focus { border-color: var(--accent); }
+    .row {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+      align-items: center;
+    }
+    button {
+      padding: 9px 18px;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      background: var(--accent);
+      color: #0b1020;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s ease;
+    }
+    button:disabled { opacity: 0.6; cursor: progress; }
+    .meta { font-size: 12px; color: var(--muted); }
+    pre#answer {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: inherit;
+      font-size: 14.5px;
+      line-height: 1.65;
+      min-height: 48px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(124, 156, 255, 0.15);
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.4px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>GoResearch <span class="badge">Phase 1</span></h1>
+      <p>Hertz + Eino · SSE 流式问答 Demo（多 Agent 编排在 Phase 2 接入）</p>
+    </header>
+
+    <section class="panel">
+      <h2>问题</h2>
+      <textarea id="question" placeholder="例如：用三段话讲清楚 Raft 中的 leader election">用三段话讲清楚 Raft 中的 leader election</textarea>
+      <div class="row">
+        <button id="ask">发送</button>
+        <span class="meta" id="status">就绪</span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>回答</h2>
+      <pre id="answer"></pre>
+    </section>
+  </main>
+
+  <script>
+    const $q = document.getElementById("question");
+    const $ans = document.getElementById("answer");
+    const $btn = document.getElementById("ask");
+    const $status = document.getElementById("status");
+
+    $btn.addEventListener("click", async () => {
+      const message = $q.value.trim();
+      if (!message) return;
+
+      $ans.textContent = "";
+      $btn.disabled = true;
+      $status.textContent = "请求中…";
+
+      const startedAt = performance.now();
+      let firstTokenAt = 0;
+      let chars = 0;
+
+      try {
+        const resp = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Accept": "text/event-stream" },
+          body: JSON.stringify({ message })
+        });
+        if (!resp.ok || !resp.body) {
+          $ans.textContent = `请求失败：${resp.status} ${resp.statusText}`;
+          $status.textContent = "失败";
+          return;
+        }
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          let idx;
+          while ((idx = buffer.indexOf("\n\n")) !== -1) {
+            const raw = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+            handleEvent(raw);
+          }
+        }
+        const elapsed = Math.round(performance.now() - startedAt);
+        const ttft = firstTokenAt ? Math.round(firstTokenAt - startedAt) : -1;
+        $status.textContent = `完成 · 共 ${chars} 字符 · 首 token ${ttft}ms · 总耗时 ${elapsed}ms`;
+      } catch (err) {
+        $ans.textContent += `\n[stream error] ${err}`;
+        $status.textContent = "出错";
+      } finally {
+        $btn.disabled = false;
+      }
+
+      function handleEvent(raw) {
+        const lines = raw.split("\n");
+        let event = "message";
+        let data = "";
+        for (const line of lines) {
+          if (line.startsWith("event:")) event = line.slice(6).trim();
+          else if (line.startsWith("data:")) data += line.slice(5).trim();
+        }
+        if (event === "token") {
+          try {
+            const obj = JSON.parse(data);
+            if (!firstTokenAt) firstTokenAt = performance.now();
+            $ans.textContent += obj.delta || "";
+            chars += (obj.delta || "").length;
+          } catch (_) { /* ignore */ }
+        } else if (event === "error") {
+          $ans.textContent += `\n[server error] ${data}`;
+        }
+      }
+    });
+  </script>
+</body>
+</html>
