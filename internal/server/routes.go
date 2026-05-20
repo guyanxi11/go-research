@@ -21,4 +21,5 @@ func (s *Server) routes() {
 
 	api := s.h.Group("/api")
 	api.POST("/chat", s.handleChat)
+	api.POST("/research", s.handleResearch)
 }
