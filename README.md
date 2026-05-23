@@ -3,7 +3,7 @@
 > 一个用 Go 写的多 Agent 协作「深度研究助手」平台。
 > 用户输入一个问题 → Planner 拆解子任务 → 多个 Researcher 并发检索 → Writer 输出带引用的报告。
 >
-> 当前进度：**Phase 2 — DAG 调度引擎 + 多 Agent 协作 pipeline 已上线**。
+> 当前进度：**Phase 3 — Postgres 持久化 + Redis 搜索缓存 + 研究历史 API**。
 >
 > 端到端实测：单次 research 拉起 3 个并发 Researcher、Writer 流式输出 1769 tokens / 7376 字 / 18.1s 完成。
 
@@ -110,7 +110,27 @@ cp .env.example .env
 
 LLM API key 推荐去 [DeepSeek 开放平台](https://platform.deepseek.com/) 申请，每月免费额度够开发用。
 
-### 2. 起 Postgres + Redis（可选，Phase 1 不强依赖）
+### 1.1 接 Tavily 真搜索（Research 推荐）
+
+不配置时 Research 使用 **Mock 搜索**（假链接）。要真实联网检索：
+
+1. 打开 [Tavily](https://app.tavily.com/) 注册并创建 API Key（`tvly-...`）
+2. 写入 `.env`：
+
+```env
+TAVILY_API_KEY=tvly-你的key
+TAVILY_SEARCH_DEPTH=basic   # 或 advanced（更准、更耗额度）
+```
+
+3. 验证 key 是否可用：
+
+```bash
+make tavily-smoke
+```
+
+4. 重启服务，启动日志应出现 `search tool: tavily`，浏览器 Chat 标签旁显示 **· Tavily**
+
+### 2. 起 Postgres + Redis（Phase 3 必须；Docker 一键起，无需本机安装 Postgres）
 
 ```bash
 make up
@@ -161,7 +181,8 @@ go mod edit -module github.com/<你的用户名>/go-research
 - [x] **Phase 2.A** DAG 调度引擎 + 令牌桶限流 + 21 个单测
 - [x] **Phase 2.B** Planner / Researcher / Writer / Orchestrator + `/api/research` SSE
 - [x] **Phase 2.C** 前端可视化：Tab 切换、计划树、流式 Markdown 报告
-- [ ] **Phase 3** Postgres + pgvector 落库（plan / findings / report / 引用）+ Redis 缓存 + 历史记录页
+- [x] **Phase 3** Postgres 落库（plan / findings / report）+ Redis 搜索缓存 + `GET /api/research` 历史 API + History 页
+- [ ] **Phase 3.5** pgvector 向量记忆（RAG / 长期记忆）
 - [ ] **Phase 4** Critic agent（评分回退）+ Researcher 升级为多轮 ReAct + 向量长时记忆
 - [ ] **Phase 5** OpenTelemetry + Prometheus + Grafana + 压测
 - [ ] **Phase 6** Docker 镜像 + 一键部署到 Railway/Fly.io + Demo 视频 + 技术博客

@@ -1,4 +1,4 @@
-.PHONY: help tidy run build test fmt vet up down logs psql redis-cli
+.PHONY: help tidy run build test fmt vet up down logs psql redis-cli tavily-smoke
 
 APP        := go-research
 BIN_DIR    := bin
@@ -17,11 +17,19 @@ help:
 	@echo "  make logs      - docker compose logs -f"
 	@echo "  make psql      - open psql in the postgres container"
 	@echo "  make redis-cli - open redis-cli in the redis container"
+	@echo "  make tavily-smoke - test Tavily API key from .env (one search)"
 
 tidy:
 	go mod tidy
 
 run:
+	go run $(MAIN_PKG)
+
+# Start deps and block until Postgres accepts connections (avoids race after `make up`).
+run-ready: up
+	@echo Waiting for Postgres...
+	@docker compose exec -T postgres pg_isready -U research -d research
+	@echo Postgres ready.
 	go run $(MAIN_PKG)
 
 build:
@@ -50,3 +58,6 @@ psql:
 
 redis-cli:
 	docker compose exec redis redis-cli
+
+tavily-smoke:
+	go run ./cmd/tavily-smoke

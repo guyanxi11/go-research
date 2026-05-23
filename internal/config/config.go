@@ -17,7 +17,8 @@ type Config struct {
 	Postgres PostgresConfig
 	Redis    RedisConfig
 
-	TavilyAPIKey string
+	TavilyAPIKey      string
+	TavilySearchDepth string
 }
 
 type LLMConfig struct {
@@ -73,7 +74,8 @@ func Load() (*Config, error) {
 			Password: getEnv("REDIS_PASSWORD", ""),
 			DB:       getEnvInt("REDIS_DB", 0),
 		},
-		TavilyAPIKey: getEnv("TAVILY_API_KEY", ""),
+		TavilyAPIKey:      getEnv("TAVILY_API_KEY", ""),
+		TavilySearchDepth: getEnv("TAVILY_SEARCH_DEPTH", "basic"),
 	}
 
 	if cfg.LLM.APIKey == "" {

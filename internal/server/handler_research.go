@@ -9,6 +9,7 @@ import (
 	hlog "github.com/cloudwego/hertz/pkg/common/hlog"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 	"github.com/cloudwego/hertz/pkg/protocol/sse"
+	"github.com/google/uuid"
 
 	"github.com/yourname/go-research/internal/agent/orchestrator"
 )
@@ -26,6 +27,7 @@ type researchRequest struct {
 //   - node_finished : a Researcher returned findings + citations
 //   - node_failed   : a Researcher exhausted retries
 //   - writer_token  : a Writer-emitted token, ready to render
+//   - session       : persisted run id (Phase 3, only when Postgres is up)
 //   - done          : pipeline complete (elapsed_ms, chars)
 //   - error         : pipeline aborted (stage + message)
 func (s *Server) handleResearch(ctx context.Context, c *app.RequestContext) {
@@ -41,6 +43,22 @@ func (s *Server) handleResearch(ctx context.Context, c *app.RequestContext) {
 
 	w := sse.NewWriter(c)
 	defer w.Close()
+
+	var sessionID string
+	var recorder *researchRecorder
+	if s.store != nil {
+		sessionID = uuid.NewString()
+		if err := s.store.CreateSession(ctx, sessionID, req.Question); err != nil {
+			hlog.Errorf("create research session: %v", err)
+			c.JSON(consts.StatusInternalServerError, map[string]string{"error": "failed to create session"})
+			return
+		}
+		recorder = newResearchRecorder(s.store, sessionID)
+		payload, _ := json.Marshal(map[string]string{"id": sessionID})
+		if err := w.WriteEvent("0", "session", payload); err != nil {
+			hlog.Warnf("research SSE session event: %v", err)
+		}
+	}
 
 	// Generously buffered so the orchestrator never blocks on a slow client
 	// while still preserving full-throughput when the consumer is fast.
@@ -59,6 +77,9 @@ func (s *Server) handleResearch(ctx context.Context, c *app.RequestContext) {
 	var eventID int
 	for ev := range events {
 		eventID++
+		if recorder != nil {
+			recorder.OnEvent(pipelineCtx, ev)
+		}
 		payload, _ := json.Marshal(ev.Payload)
 		if err := w.WriteEvent(strconv.Itoa(eventID), string(ev.Type), payload); err != nil {
 			// Client disconnected. Stop pulling, propagate cancellation to
@@ -73,7 +94,12 @@ func (s *Server) handleResearch(ctx context.Context, c *app.RequestContext) {
 			break
 		}
 	}
-	if err := <-pipelineErr; err != nil {
-		hlog.Errorf("research pipeline error: %v", err)
+	pErr := <-pipelineErr
+	if recorder != nil {
+		recorder.Finalize(ctx, pErr)
 	}
+	if pErr != nil {
+		hlog.Errorf("research pipeline error: %v", pErr)
+	}
+	_ = sessionID
 }

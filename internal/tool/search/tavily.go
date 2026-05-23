@@ -16,14 +16,22 @@ import (
 // ~1000 calls/month which is plenty for Phase 2.B demoing. If the key is
 // empty, callers should fall back to Mock.
 type Tavily struct {
-	apiKey string
-	http   *http.Client
+	apiKey      string
+	searchDepth string
+	http        *http.Client
+	endpoint    string // empty → https://api.tavily.com/search (tests may override)
 }
 
-func NewTavily(apiKey string) *Tavily {
+// NewTavily builds a Tavily search tool. searchDepth is "basic" (default) or
+// "advanced" (higher quality, uses more API credits per Tavily billing).
+func NewTavily(apiKey string, searchDepth string) *Tavily {
+	if searchDepth == "" {
+		searchDepth = "basic"
+	}
 	return &Tavily{
-		apiKey: apiKey,
-		http:   &http.Client{Timeout: 15 * time.Second},
+		apiKey:      apiKey,
+		searchDepth: searchDepth,
+		http:        &http.Client{Timeout: 20 * time.Second},
 	}
 }
 
@@ -32,9 +40,9 @@ func (*Tavily) Description() string {
 	return "Search the web via Tavily. Returns a list of {title, url, snippet}."
 }
 
-// tavilyReq mirrors https://docs.tavily.com/docs/rest-api/api-reference
+// tavilyReq mirrors https://docs.tavily.com/documentation/api-reference/endpoint/search
+// Auth is via Authorization: Bearer header (not api_key in body).
 type tavilyReq struct {
-	APIKey      string `json:"api_key"`
 	Query       string `json:"query"`
 	SearchDepth string `json:"search_depth,omitempty"`
 	MaxResults  int    `json:"max_results,omitempty"`
@@ -64,18 +72,25 @@ func (t *Tavily) Call(ctx context.Context, args json.RawMessage) (string, error)
 		a.MaxItems = 5
 	}
 
+	depth := t.searchDepth
+	if depth == "" {
+		depth = "basic"
+	}
 	body, _ := json.Marshal(tavilyReq{
-		APIKey:      t.apiKey,
 		Query:       a.Query,
-		SearchDepth: "basic",
+		SearchDepth: depth,
 		MaxResults:  a.MaxItems,
 	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"https://api.tavily.com/search", bytes.NewReader(body))
+	url := t.endpoint
+	if url == "" {
+		url = "https://api.tavily.com/search"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+t.apiKey)
 
 	resp, err := t.http.Do(req)
 	if err != nil {

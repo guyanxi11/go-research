@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>GoResearch · Phase 2</title>
+  <title>GoResearch · Phase 3</title>
   <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
   <style>
     :root {
@@ -414,18 +414,51 @@
       cursor: pointer;
     }
     .example:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* ===== History view ===== */
+    #history-view {
+      gap: 14px;
+      padding: 18px 4px 24px;
+      overflow-y: auto;
+    }
+    .history-list { display: flex; flex-direction: column; gap: 8px; }
+    .history-item {
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      cursor: pointer;
+      transition: border-color 0.15s ease;
+    }
+    .history-item:hover { border-color: var(--accent); }
+    .history-item.active { border-color: var(--accent); background: var(--accent-soft); }
+    .history-q { font-size: 14px; line-height: 1.5; margin-bottom: 6px; }
+    .history-meta { font-size: 11px; color: var(--muted); display: flex; gap: 12px; flex-wrap: wrap; }
+    .status-pill {
+      padding: 1px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    .status-pill.completed { background: rgba(101, 211, 156, 0.15); color: var(--success); }
+    .status-pill.running { background: var(--accent-soft); color: var(--accent); }
+    .status-pill.failed { background: rgba(255, 107, 107, 0.15); color: var(--danger); }
+    #history-detail .placeholder { color: var(--muted); font-size: 14px; }
   </style>
 </head>
 <body>
   <div class="app">
     <header>
       <div class="brand">
-        <h1>GoResearch <span class="badge">Phase 2</span></h1>
-        <p>Hertz + Eino · 多 Agent 协作 · DAG 调度 · SSE 流式</p>
+        <h1>GoResearch <span class="badge">Phase 3</span></h1>
+        <p>Hertz + Eino · Postgres 持久化 · Redis 缓存 · 多 Agent SSE</p>
       </div>
       <div class="tabs">
         <button class="tab active" data-view="chat">Chat<span class="model" id="model-chat"></span></button>
         <button class="tab" data-view="research">Research</button>
+        <button class="tab" data-view="history">History</button>
       </div>
     </header>
 
@@ -481,13 +514,31 @@
         <div id="report" class="placeholder">报告将在所有子任务完成后由 Writer 流式生成。</div>
       </div>
     </section>
+
+    <!-- ========================= HISTORY VIEW ========================= -->
+    <section id="history-view" class="view">
+      <div class="card">
+        <h3>研究历史 <span class="count" id="history-count">—</span></h3>
+        <div id="history-list" class="history-list">
+          <div class="empty">加载中…（需 Postgres：`make up`）</div>
+        </div>
+      </div>
+      <div class="card" id="history-detail">
+        <h3>历史详情</h3>
+        <div id="history-detail-body" class="placeholder">点击左侧一条记录查看完整报告。</div>
+      </div>
+    </section>
   </div>
 
   <script>
     // ===================== Common: model badge =========================
     fetch("/healthz").then(r => r.json())
       .then(j => {
-        if (j.model) document.getElementById("model-chat").textContent = " · " + j.model;
+        let badge = "";
+        if (j.model) badge += " · " + j.model;
+        if (j.search === "tavily") badge += " · Tavily";
+        else if (j.search === "mock") badge += " · Mock搜索";
+        document.getElementById("model-chat").textContent = badge;
       }).catch(() => {});
 
     // ===================== Tab switching ==============================
@@ -496,6 +547,7 @@
         document.querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
         const target = t.dataset.view;
         document.querySelectorAll(".view").forEach(v => v.classList.toggle("active", v.id === target + "-view"));
+        if (target === "history") loadHistoryList();
       });
     });
 
@@ -776,6 +828,12 @@
             chars += (payload.delta || "").length;
             scheduleReportRender();
 
+          } else if (event === "session") {
+            // persisted session id (Phase 3); shown in meta for debugging
+            if (payload.id) {
+              $reportMeta.textContent = `session ${payload.id.slice(0, 8)}…`;
+            }
+
           } else if (event === "done") {
             const total = performance.now() - startedAt;
             const ttwt = firstTokenAt ? Math.round(firstTokenAt - startedAt) : -1;
@@ -793,6 +851,80 @@
       } finally {
         researchInFlight = false;
         $rgo.disabled = false;
+      }
+    }
+
+    // ===================== History view (Phase 3) =====================
+    const $historyList = document.getElementById("history-list");
+    const $historyCount = document.getElementById("history-count");
+    const $historyDetail = document.getElementById("history-detail-body");
+    let historyLoaded = false;
+
+    async function loadHistoryList() {
+      $historyList.innerHTML = '<div class="empty">加载中…</div>';
+      try {
+        const resp = await fetch("/api/research?limit=30");
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        const items = data.items || [];
+        $historyCount.textContent = String(items.length);
+        if (!items.length) {
+          $historyList.innerHTML = '<div class="empty">暂无记录。在 Research 页完成一次研究后会出现在这里。</div>';
+          return;
+        }
+        $historyList.innerHTML = "";
+        items.forEach(item => {
+          const el = document.createElement("div");
+          el.className = "history-item";
+          el.dataset.id = item.id;
+          const when = item.created_at ? new Date(item.created_at).toLocaleString() : "";
+          const pillClass = item.status || "running";
+          el.innerHTML = `
+            <div class="history-q">${escapeHtml(item.question)}</div>
+            <div class="history-meta">
+              <span class="status-pill ${pillClass}">${escapeHtml(item.status)}</span>
+              <span>${when}</span>
+              ${item.char_count ? `<span>${item.char_count} 字</span>` : ""}
+            </div>
+          `;
+          el.addEventListener("click", () => loadHistoryDetail(item.id, el));
+          $historyList.appendChild(el);
+        });
+        historyLoaded = true;
+      } catch (err) {
+        $historyList.innerHTML = `<div class="empty" style="color:var(--danger)">加载失败：${escapeHtml(String(err))}<br>请先 <code>make up</code> 启动 Postgres，再 <code>make run</code>。</div>`;
+      }
+    }
+
+    async function loadHistoryDetail(id, el) {
+      document.querySelectorAll(".history-item").forEach(x => x.classList.remove("active"));
+      if (el) el.classList.add("active");
+      $historyDetail.innerHTML = '<div class="placeholder">加载中…</div>';
+      try {
+        const resp = await fetch(`/api/research/${id}`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const det = await resp.json();
+        let html = `<div class="meta-row" style="margin-bottom:12px;">
+          <span><span class="key">状态</span> ${escapeHtml(det.status)}</span>
+          <span><span class="key">问题</span> ${escapeHtml(det.question)}</span>
+        </div>`;
+        if (det.tasks && det.tasks.length) {
+          html += `<h4 style="margin:12px 0 8px;color:var(--muted);font-size:12px;">子任务 (${det.tasks.length})</h4>`;
+          det.tasks.forEach(t => {
+            html += `<div class="finding open" style="margin-bottom:8px;">
+              <div class="finding-head"><span class="subtask-id">${escapeHtml(t.task_id)}</span> ${escapeHtml(t.question)}</div>
+              <div class="finding-body">${renderMd(t.findings || "(无 findings)")}</div>
+            </div>`;
+          });
+        }
+        html += `<h4 style="margin:16px 0 8px;color:var(--muted);font-size:12px;">报告</h4>`;
+        html += det.report ? renderMd(det.report) : '<span class="placeholder">(无报告)</span>';
+        if (det.error_message) {
+          html += `<div style="color:var(--danger);margin-top:12px;">${escapeHtml(det.error_message)}</div>`;
+        }
+        $historyDetail.innerHTML = html;
+      } catch (err) {
+        $historyDetail.innerHTML = `<div style="color:var(--danger)">${escapeHtml(String(err))}</div>`;
       }
     }
 
