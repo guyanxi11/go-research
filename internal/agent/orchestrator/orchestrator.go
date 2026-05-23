@@ -26,6 +26,8 @@ type EventType string
 const (
 	EventPlan         EventType = "plan"
 	EventNodeStarted  EventType = "node_started"
+	EventSearchRound  EventType = "search_round"
+	EventCriticReview EventType = "critic_review"
 	EventNodeFinished EventType = "node_finished"
 	EventNodeFailed   EventType = "node_failed"
 	EventWriterToken  EventType = "writer_token"
@@ -66,6 +68,21 @@ type NodeFailedPayload struct {
 	Error string `json:"error"`
 }
 
+type SearchRoundPayload struct {
+	ID          string `json:"id"`
+	Round       int    `json:"round"`
+	Query       string `json:"query"`
+	ResultCount int    `json:"result_count"`
+}
+
+type CriticReviewPayload struct {
+	ID       string `json:"id"`
+	Attempt  int    `json:"attempt"`
+	Score    int    `json:"score"`
+	Pass     bool   `json:"pass"`
+	Feedback string `json:"feedback,omitempty"`
+}
+
 type WriterTokenPayload struct {
 	Delta string `json:"delta"`
 }
@@ -77,9 +94,10 @@ type DonePayload struct {
 
 // Deps groups the runtime dependencies an Engine needs.
 type Deps struct {
-	LLM       *llm.Client
-	Tools     *tool.Registry
-	Scheduler *dag.Scheduler
+	LLM            *llm.Client
+	Tools          *tool.Registry
+	Scheduler      *dag.Scheduler
+	ResearcherOpts researcher.Options
 }
 
 type Engine struct {
@@ -121,7 +139,7 @@ func (e *Engine) Run(ctx context.Context, question string, events chan<- Event) 
 		emit(events, Event{Type: EventError, Payload: map[string]string{"stage": "tools", "error": err.Error()}})
 		return err
 	}
-	r := researcher.New(e.deps.LLM, searchTool)
+	r := researcher.New(e.deps.LLM, searchTool, e.deps.ResearcherOpts)
 
 	g := dag.NewGraph()
 	questionByID := make(map[string]string, len(plan.Subtasks))
@@ -141,7 +159,20 @@ func (e *Engine) Run(ctx context.Context, question string, events chan<- Event) 
 						upstream = append(upstream, f)
 					}
 				}
-				return r.Research(ctx, st.ID, st.Question, upstream)
+				return r.Research(ctx, st.ID, st.Question, upstream, func(ev researcher.ProgressEvent) {
+					if ev.SearchRound != nil {
+						p := ev.SearchRound
+						emit(events, Event{Type: EventSearchRound, Payload: SearchRoundPayload{
+							ID: p.TaskID, Round: p.Round, Query: p.Query, ResultCount: p.ResultCount,
+						}})
+					}
+					if ev.CriticReview != nil {
+						p := ev.CriticReview
+						emit(events, Event{Type: EventCriticReview, Payload: CriticReviewPayload{
+							ID: p.TaskID, Attempt: p.Attempt, Score: p.Score, Pass: p.Pass, Feedback: p.Feedback,
+						}})
+					}
+				})
 			},
 		})
 		if err != nil {

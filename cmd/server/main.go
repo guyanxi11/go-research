@@ -9,6 +9,7 @@ import (
 
 	"github.com/yourname/go-research/internal/agent/dag"
 	"github.com/yourname/go-research/internal/agent/orchestrator"
+	"github.com/yourname/go-research/internal/agent/researcher"
 	rediscache "github.com/yourname/go-research/internal/cache/redis"
 	"github.com/yourname/go-research/internal/config"
 	"github.com/yourname/go-research/internal/llm"
@@ -69,10 +70,21 @@ func main() {
 		dag.WithConcurrency(6),
 		dag.WithBackoff(dag.ExponentialBackoff(200*time.Millisecond, 3*time.Second)),
 	)
+	researchOpts := researcher.Options{
+		MaxSearchRounds:    cfg.Agent.MaxSearchRounds,
+		MaxFollowUpQueries: cfg.Agent.MaxFollowUpQueries,
+		CriticEnabled:      cfg.Agent.CriticEnabled,
+		CriticMinScore:     cfg.Agent.CriticMinScore,
+		MaxCriticRetries:   cfg.Agent.MaxCriticRetries,
+	}
+	hlog.Infof("agent: search_rounds=%d critic=%v min_score=%d",
+		researchOpts.MaxSearchRounds, researchOpts.CriticEnabled, researchOpts.CriticMinScore)
+
 	orch := orchestrator.New(orchestrator.Deps{
-		LLM:       llmClient,
-		Tools:     tools,
-		Scheduler: scheduler,
+		LLM:            llmClient,
+		Tools:          tools,
+		Scheduler:      scheduler,
+		ResearcherOpts: researchOpts,
 	})
 
 	if err := server.New(cfg, llmClient, orch, pgStore, pgStore).Run(); err != nil {

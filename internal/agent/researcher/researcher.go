@@ -1,21 +1,13 @@
-// Package researcher answers a single sub-question by calling one search tool
-// once and then asking the LLM to synthesise findings + inline citations.
-//
-// Why no ReAct loop? It is intentional: Phase 2.B prioritises predictable,
-// cheap, debuggable execution over open-ended tool use. The LLM is constrained
-// to "synthesise from the snippets I gave you" which keeps token spend and
-// latency bounded and avoids the model inventing tool calls. ReAct lives on
-// the roadmap for Phase 2.5+ once the rest of the pipeline is solid.
+// Package researcher answers a single sub-question using bounded multi-round
+// search (ReAct-style) and optional Critic review with resynthesis (Phase 4).
 package researcher
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
-	"github.com/cloudwego/eino/schema"
-
+	"github.com/yourname/go-research/internal/agent/critic"
 	"github.com/yourname/go-research/internal/llm"
 	"github.com/yourname/go-research/internal/tool"
 )
@@ -29,7 +21,7 @@ type Findings struct {
 }
 
 type Citation struct {
-	Index   int    `json:"index"` // [1], [2], ... as referenced in Markdown
+	Index   int    `json:"index"`
 	Title   string `json:"title"`
 	URL     string `json:"url"`
 	Snippet string `json:"snippet,omitempty"`
@@ -38,48 +30,65 @@ type Citation struct {
 type Researcher struct {
 	llm    *llm.Client
 	search tool.Tool
+	opts   Options
+	critic *critic.Critic
 }
 
-func New(client *llm.Client, search tool.Tool) *Researcher {
-	return &Researcher{llm: client, search: search}
+func New(client *llm.Client, search tool.Tool, opts Options) *Researcher {
+	opts = opts.normalized()
+	var cr *critic.Critic
+	if opts.CriticEnabled {
+		cr = critic.New(client, opts.CriticMinScore)
+	}
+	return &Researcher{llm: client, search: search, opts: opts, critic: cr}
 }
 
-// Research is the entry point used by the orchestrator and the DAG node.
-// `upstream` carries Findings from dependency subtasks (currently unused in
-// the prompt but accepted so future Planner outputs can chain reasoning).
-func (r *Researcher) Research(ctx context.Context, taskID, question string, upstream []*Findings) (*Findings, error) {
-	args, _ := json.Marshal(tool.SearchArgs{Query: question, MaxItems: 5})
-	rawResults, err := r.search.Call(ctx, args)
+// Research runs search → synthesis → optional Critic loop.
+// ProgressHook is optional (used by orchestrator for SSE).
+func (r *Researcher) Research(
+	ctx context.Context,
+	taskID, question string,
+	upstream []*Findings,
+	hook ProgressHook,
+) (*Findings, error) {
+	items, err := r.collectSearchResults(ctx, taskID, question, r.opts, hook)
 	if err != nil {
-		return nil, fmt.Errorf("search: %w", err)
-	}
-	var results tool.SearchResult
-	if err := json.Unmarshal([]byte(rawResults), &results); err != nil {
-		return nil, fmt.Errorf("decode search results: %w", err)
-	}
-	if len(results.Items) == 0 {
-		return nil, fmt.Errorf("no search results for %q", question)
+		return nil, err
 	}
 
-	prompt := buildPrompt(question, results.Items, upstream)
-	out, err := r.llm.Generate(ctx, []*schema.Message{
-		schema.SystemMessage(systemPrompt),
-		schema.UserMessage(prompt),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("llm: %w", err)
-	}
+	maxAttempts := 1 + r.opts.MaxCriticRetries
+	var feedback string
+	var last *Findings
 
-	cites := make([]Citation, len(results.Items))
-	for i, it := range results.Items {
-		cites[i] = Citation{Index: i + 1, Title: it.Title, URL: it.URL, Snippet: it.Snippet}
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		f, err := r.synthesize(ctx, question, items, upstream, feedback)
+		if err != nil {
+			return nil, err
+		}
+		f.TaskID = taskID
+		f.Question = question
+		last = f
+
+		if r.critic == nil {
+			return f, nil
+		}
+
+		review, err := r.critic.Review(ctx, question, f.Markdown, len(f.Citations))
+		if err != nil {
+			return nil, fmt.Errorf("critic: %w", err)
+		}
+		if hook != nil {
+			hook(ProgressEvent{CriticReview: &CriticReviewPayload{
+				TaskID: taskID, Attempt: attempt,
+				Score: review.Score, Pass: review.Pass, Feedback: review.Feedback,
+			}})
+		}
+		if review.Pass || attempt == maxAttempts {
+			return f, nil
+		}
+		feedback = review.Feedback
 	}
-	return &Findings{
-		TaskID:    taskID,
-		Question:  question,
-		Markdown:  strings.TrimSpace(out.Content),
-		Citations: cites,
-	}, nil
+	return last, nil
 }
 
 const systemPrompt = `You are a research agent. Answer the sub-question using ONLY the search results

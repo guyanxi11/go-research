@@ -19,6 +19,17 @@ type Config struct {
 
 	TavilyAPIKey      string
 	TavilySearchDepth string
+
+	Agent AgentConfig
+}
+
+// AgentConfig tunes Phase 4 researcher ReAct + critic behaviour.
+type AgentConfig struct {
+	MaxSearchRounds    int
+	MaxFollowUpQueries int
+	CriticEnabled      bool
+	CriticMinScore     int
+	MaxCriticRetries   int
 }
 
 type LLMConfig struct {
@@ -76,6 +87,13 @@ func Load() (*Config, error) {
 		},
 		TavilyAPIKey:      getEnv("TAVILY_API_KEY", ""),
 		TavilySearchDepth: getEnv("TAVILY_SEARCH_DEPTH", "basic"),
+		Agent: AgentConfig{
+			MaxSearchRounds:    getEnvInt("RESEARCH_MAX_SEARCH_ROUNDS", 2),
+			MaxFollowUpQueries: getEnvInt("RESEARCH_MAX_FOLLOWUP_QUERIES", 2),
+			CriticEnabled:      getEnvBool("CRITIC_ENABLED", true),
+			CriticMinScore:     getEnvInt("CRITIC_MIN_SCORE", 6),
+			MaxCriticRetries:   getEnvInt("CRITIC_MAX_RETRIES", 1),
+		},
 	}
 
 	if cfg.LLM.APIKey == "" {
@@ -98,4 +116,19 @@ func getEnvInt(key string, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	v, ok := os.LookupEnv(key)
+	if !ok || v == "" {
+		return fallback
+	}
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
 }
