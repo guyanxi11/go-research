@@ -3,9 +3,15 @@ package server
 import hlog "github.com/cloudwego/hertz/pkg/common/hlog"
 
 func (s *Server) routes() {
-	// Health and static assets stay public so probes / browser visits keep
-	// working even when API_KEY is enabled.
+	// HTTP request metrics are recorded for every route, including /healthz
+	// and /metrics, so dashboards reflect real traffic shape (including
+	// probes). Cardinality is bounded by FullPath() route templates.
+	s.h.Use(httpMetrics())
+
+	// Health, metrics and static assets stay public so probes / browser
+	// visits / Prometheus scrapes keep working even when API_KEY is enabled.
 	s.h.GET("/healthz", s.handleHealthz)
+	s.h.GET("/metrics", handleMetrics())
 	s.h.StaticFile("/", "./web/index.html")
 	s.h.Static("/static", "./web")
 

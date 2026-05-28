@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/yourname/go-research/internal/agent/jsonutil"
 	"github.com/yourname/go-research/internal/llm"
+	"github.com/yourname/go-research/internal/metrics"
 )
 
 // Review is the structured output of a Critic pass.
@@ -50,7 +52,13 @@ Scoring guide: 8-10 solid, 6-7 acceptable but thin, 1-5 major gaps or ignores so
 
 // Review evaluates findings against the sub-question. Pass is derived from score
 // and the configured minimum threshold.
-func (c *Critic) Review(ctx context.Context, question, markdown string, citationCount int) (*Review, error) {
+func (c *Critic) Review(ctx context.Context, question, markdown string, citationCount int) (rev *Review, retErr error) {
+	start := time.Now()
+	defer func() {
+		metrics.AgentStepDurationSeconds.
+			WithLabelValues("critic", metrics.Outcome(retErr)).
+			Observe(time.Since(start).Seconds())
+	}()
 	if strings.TrimSpace(markdown) == "" {
 		return nil, fmt.Errorf("critic: empty findings")
 	}

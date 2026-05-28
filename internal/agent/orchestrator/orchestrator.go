@@ -17,6 +17,7 @@ import (
 	"github.com/yourname/go-research/internal/agent/researcher"
 	"github.com/yourname/go-research/internal/agent/writer"
 	"github.com/yourname/go-research/internal/llm"
+	"github.com/yourname/go-research/internal/metrics"
 	"github.com/yourname/go-research/internal/tool"
 )
 
@@ -113,7 +114,7 @@ func New(deps Deps) *Engine { return &Engine{deps: deps} }
 // The function blocks until the pipeline finishes or ctx is cancelled. The
 // caller owns the events channel and is responsible for closing it when the
 // returned function exits.
-func (e *Engine) Run(ctx context.Context, question string, events chan<- Event) error {
+func (e *Engine) Run(ctx context.Context, question string, events chan<- Event) (retErr error) {
 	if question == "" {
 		return errors.New("orchestrator: empty question")
 	}
@@ -122,10 +123,32 @@ func (e *Engine) Run(ctx context.Context, question string, events chan<- Event) 
 	}
 
 	overallStart := time.Now()
+	chars := 0
+	// Record session-level metrics exactly once on every exit. status mirrors
+	// the persistence layer vocabulary: done / failed / canceled.
+	defer func() {
+		status := "done"
+		if retErr != nil {
+			if errors.Is(retErr, context.Canceled) || errors.Is(retErr, context.DeadlineExceeded) {
+				status = "canceled"
+			} else {
+				status = "failed"
+			}
+		}
+		metrics.ResearchSessionsTotal.WithLabelValues(status).Inc()
+		metrics.ResearchSessionDurationSeconds.WithLabelValues(status).
+			Observe(time.Since(overallStart).Seconds())
+		if chars > 0 {
+			metrics.ResearchReportCharsTotal.Add(float64(chars))
+		}
+	}()
 
 	// ---- Stage 1: Planner -----------------------------------------------
 	p := planner.New(e.deps.LLM)
+	stageStart := time.Now()
 	plan, err := p.Plan(ctx, question)
+	metrics.AgentStepDurationSeconds.WithLabelValues("planner", metrics.Outcome(err)).
+		Observe(time.Since(stageStart).Seconds())
 	if err != nil {
 		emit(events, Event{Type: EventError, Payload: map[string]string{"stage": "planner", "error": err.Error()}})
 		return err
@@ -239,12 +262,14 @@ func (e *Engine) Run(ctx context.Context, question string, events chan<- Event) 
 
 	// ---- Stage 3: Writer (streaming) -----------------------------------
 	w := writer.New(e.deps.LLM)
-	chars := 0
+	writerStart := time.Now()
 	full, werr := w.Stream(ctx, question, findings, func(delta string) error {
 		chars += len(delta)
 		emit(events, Event{Type: EventWriterToken, Payload: WriterTokenPayload{Delta: delta}})
 		return ctx.Err()
 	})
+	metrics.AgentStepDurationSeconds.WithLabelValues("writer", metrics.Outcome(werr)).
+		Observe(time.Since(writerStart).Seconds())
 	if werr != nil {
 		emit(events, Event{Type: EventError, Payload: map[string]string{"stage": "writer", "error": werr.Error()}})
 		return werr

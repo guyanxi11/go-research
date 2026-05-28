@@ -32,6 +32,22 @@ services:
       timeout: 3s
       retries: 10
 
+  # Scrapes go-research's /metrics endpoint. host.docker.internal is
+  # available on Docker Desktop (Win/Mac); for Linux add an extra_hosts
+  # entry mapping it to host-gateway (commented below).
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    container_name: go-research-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+
 volumes:
   postgres-data:
   redis-data:
+  prometheus-data:
