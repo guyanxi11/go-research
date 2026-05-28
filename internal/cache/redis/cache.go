@@ -3,8 +3,6 @@ package redis
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -44,9 +42,13 @@ func (c *Cache) Close() error {
 	return c.client.Close()
 }
 
-// GetSearch returns cached JSON for a search query, or ("", false, nil).
-func (c *Cache) GetSearch(ctx context.Context, query string) (string, bool, error) {
-	val, err := c.client.Get(ctx, searchKey(query)).Result()
+// GetSearch returns cached JSON for an opaque key, or ("", false, nil).
+//
+// The key is treated as opaque: the caller is responsible for composing it
+// (e.g. across provider/depth/max_items dimensions). This namespace only
+// prepends a fixed "search:" prefix.
+func (c *Cache) GetSearch(ctx context.Context, key string) (string, bool, error) {
+	val, err := c.client.Get(ctx, redisKey(key)).Result()
 	if err == redis.Nil {
 		return "", false, nil
 	}
@@ -56,14 +58,13 @@ func (c *Cache) GetSearch(ctx context.Context, query string) (string, bool, erro
 	return val, true, nil
 }
 
-// SetSearch stores search tool output JSON.
-func (c *Cache) SetSearch(ctx context.Context, query, jsonResult string) error {
-	return c.client.Set(ctx, searchKey(query), jsonResult, c.ttl).Err()
+// SetSearch stores search tool output JSON under an opaque key.
+func (c *Cache) SetSearch(ctx context.Context, key, jsonResult string) error {
+	return c.client.Set(ctx, redisKey(key), jsonResult, c.ttl).Err()
 }
 
-func searchKey(query string) string {
-	sum := sha256.Sum256([]byte(query))
-	return "search:" + hex.EncodeToString(sum[:])
+func redisKey(key string) string {
+	return "search:" + key
 }
 
 // String returns a short label for logs.

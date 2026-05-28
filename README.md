@@ -3,7 +3,7 @@
 > 一个用 Go 写的多 Agent 协作「深度研究助手」平台。
 > 用户输入一个问题 → Planner 拆解子任务 → 多个 Researcher 并发检索 → Writer 输出带引用的报告。
 >
-> 当前进度：**Phase 3 — Postgres 持久化 + Redis 搜索缓存 + 研究历史 API**。
+> 当前进度：**Phase 4 — 多轮 ReAct + Critic 自评回退**（在 Phase 3 持久化 / 缓存 / 历史 API 之上）。
 >
 > 端到端实测：单次 research 拉起 3 个并发 Researcher、Writer 流式输出 1769 tokens / 7376 字 / 18.1s 完成。
 
@@ -49,9 +49,17 @@
 - **Tool 系统**（`internal/tool`）— 可插拔接口 + Registry，已接入 Mock 与 Tavily 两套搜索
 - **多 Agent 协作**（`internal/agent`）
   - Planner — 严格 JSON 输出 + 容错解析 + 失败重试一次
-  - Researcher — 单轮 search + LLM 综合，输出 findings + 行内引用
+  - Researcher — **多轮 ReAct 搜索**（按需追加 follow-up query，URL 去重保持插入顺序）+ LLM 综合，输出 findings + 行内引用
+  - Critic — 对每个子任务的 findings 评分 1-10，低于阈值给出反馈让 Researcher 重做
   - Writer — 全局重编号引用，Token 流式输出
-  - Orchestrator — 串起三阶段，统一 Event 流给 HTTP 层
+  - Orchestrator — 串起四阶段，统一 Event 流给 HTTP 层（`search_round` / `critic_review` 也走 SSE）
+- **持久化与缓存**
+  - Postgres：`research_sessions` + `research_tasks` 两张表，记录 plan / 子任务状态 / report / 错误，`sort_order` 仅在 INSERT 时写入避免被后续 UPSERT 抹平
+  - Redis 搜索缓存：缓存 key 纳入 provider + depth + max_items + schema 版本，换 provider / 改 depth 不会拿到错的旧结果
+- **安全 & 健壮性**
+  - 可选 `X-API-Key` 鉴权（设置 `API_KEY` 后启用，未设置保持本地开发友好）
+  - `/api/research` 总超时（`RESEARCH_TIMEOUT_SECONDS`，默认 180s）防止 LLM 挂死泄漏 goroutine
+  - SSE 客户端断开时取消上游 pipeline，事件 channel 主动 drain
 - **前端可视化**（`web/index.html`）
   - Tab 切换 Chat / Research 两种模式
   - Plan 树：每个子任务一张卡，状态点（pending/running/done/failed），实时耗时徽章
@@ -182,8 +190,8 @@ go mod edit -module github.com/<你的用户名>/go-research
 - [x] **Phase 2.B** Planner / Researcher / Writer / Orchestrator + `/api/research` SSE
 - [x] **Phase 2.C** 前端可视化：Tab 切换、计划树、流式 Markdown 报告
 - [x] **Phase 3** Postgres 落库（plan / findings / report）+ Redis 搜索缓存 + `GET /api/research` 历史 API + History 页
+- [x] **Phase 4** Researcher 多轮 ReAct + Critic 评分回退 + `search_round` / `critic_review` SSE 事件 + 可选 X-API-Key 鉴权 + research 总超时
 - [ ] **Phase 3.5** pgvector 向量记忆（RAG / 长期记忆）
-- [ ] **Phase 4** Critic agent（评分回退）+ Researcher 升级为多轮 ReAct + 向量长时记忆
 - [ ] **Phase 5** OpenTelemetry + Prometheus + Grafana + 压测
 - [ ] **Phase 6** Docker 镜像 + 一键部署到 Railway/Fly.io + Demo 视频 + 技术博客
 

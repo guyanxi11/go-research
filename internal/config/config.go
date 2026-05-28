@@ -13,6 +13,15 @@ type Config struct {
 	ServerAddr string
 	LogLevel   string
 
+	// APIKey, if non-empty, requires every /api/* request to send a matching
+	// X-API-Key header. Empty means public mode (default, local-dev friendly).
+	APIKey string
+
+	// ResearchTimeoutSeconds bounds the whole /api/research pipeline (planner
+	// + DAG + writer). 0 disables it but is strongly discouraged in production
+	// because a hung LLM call can otherwise leak goroutines forever.
+	ResearchTimeoutSeconds int
+
 	LLM      LLMConfig
 	Postgres PostgresConfig
 	Redis    RedisConfig
@@ -66,8 +75,10 @@ func Load() (*Config, error) {
 	_ = godotenv.Load()
 
 	cfg := &Config{
-		ServerAddr: getEnv("SERVER_ADDR", ":8080"),
-		LogLevel:   strings.ToLower(getEnv("LOG_LEVEL", "info")),
+		ServerAddr:             getEnv("SERVER_ADDR", ":8080"),
+		LogLevel:               strings.ToLower(getEnv("LOG_LEVEL", "info")),
+		APIKey:                 getEnv("API_KEY", ""),
+		ResearchTimeoutSeconds: getEnvInt("RESEARCH_TIMEOUT_SECONDS", 180),
 		LLM: LLMConfig{
 			BaseURL: getEnv("LLM_BASE_URL", "https://api.deepseek.com/v1"),
 			APIKey:  getEnv("LLM_API_KEY", ""),

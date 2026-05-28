@@ -13,6 +13,9 @@ import (
 )
 
 // collectSearchResults runs bounded ReAct-style search waves and merges snippets.
+//
+// Results are deduplicated by URL but preserve first-seen insertion order so
+// citation numbering is stable across runs for the same query/seed.
 func (r *Researcher) collectSearchResults(
 	ctx context.Context,
 	taskID, question string,
@@ -20,21 +23,17 @@ func (r *Researcher) collectSearchResults(
 	hook ProgressHook,
 ) ([]tool.SearchItem, error) {
 	opts = opts.normalized()
-	byURL := make(map[string]tool.SearchItem)
+	seen := make(map[string]struct{})
+	ordered := make([]tool.SearchItem, 0, 8)
 	queries := []string{question}
 
 	for round := 1; round <= opts.MaxSearchRounds; round++ {
-		var nextQueries []string
 		for _, q := range queries {
 			items, err := r.searchOnce(ctx, q)
 			if err != nil {
 				return nil, err
 			}
-			for _, it := range items {
-				if it.URL != "" {
-					byURL[it.URL] = it
-				}
-			}
+			ordered = dedupAppend(seen, ordered, items)
 			if hook != nil {
 				hook(ProgressEvent{SearchRound: &SearchRoundPayload{
 					TaskID: taskID, Round: round, Query: q, ResultCount: len(items),
@@ -44,7 +43,7 @@ func (r *Researcher) collectSearchResults(
 		if round >= opts.MaxSearchRounds {
 			break
 		}
-		followUps, err := r.planFollowUpQueries(ctx, question, mapValues(byURL))
+		followUps, err := r.planFollowUpQueries(ctx, question, ordered)
 		if err != nil {
 			return nil, err
 		}
@@ -54,18 +53,13 @@ func (r *Researcher) collectSearchResults(
 		if len(followUps) > opts.MaxFollowUpQueries {
 			followUps = followUps[:opts.MaxFollowUpQueries]
 		}
-		nextQueries = followUps
-		queries = nextQueries
+		queries = followUps
 	}
 
-	out := make([]tool.SearchItem, 0, len(byURL))
-	for _, it := range byURL {
-		out = append(out, it)
-	}
-	if len(out) == 0 {
+	if len(ordered) == 0 {
 		return nil, fmt.Errorf("no search results for %q", question)
 	}
-	return out, nil
+	return ordered, nil
 }
 
 func (r *Researcher) searchOnce(ctx context.Context, query string) ([]tool.SearchItem, error) {
@@ -110,15 +104,21 @@ func (r *Researcher) planFollowUpQueries(ctx context.Context, question string, i
 	if err != nil {
 		return nil, err
 	}
-	jsonStr := jsonutil.ExtractObject(strings.TrimSpace(out.Content))
+	return parseFollowUps(out.Content), nil
+}
+
+// parseFollowUps extracts and trims the follow_up_queries array from a
+// possibly noisy LLM response. Returns nil when none are usable.
+func parseFollowUps(raw string) []string {
+	jsonStr := jsonutil.ExtractObject(strings.TrimSpace(raw))
 	if jsonStr == "" {
-		return nil, nil
+		return nil
 	}
 	var parsed struct {
 		FollowUpQueries []string `json:"follow_up_queries"`
 	}
 	if err := json.Unmarshal([]byte(jsonStr), &parsed); err != nil {
-		return nil, nil
+		return nil
 	}
 	var clean []string
 	for _, q := range parsed.FollowUpQueries {
@@ -127,15 +127,24 @@ func (r *Researcher) planFollowUpQueries(ctx context.Context, question string, i
 			clean = append(clean, q)
 		}
 	}
-	return clean, nil
+	return clean
 }
 
-func mapValues(m map[string]tool.SearchItem) []tool.SearchItem {
-	out := make([]tool.SearchItem, 0, len(m))
-	for _, v := range m {
-		out = append(out, v)
+// dedupAppend appends items to ordered, skipping entries whose URL is empty
+// or already present in seen. The seen set is updated in place. Preserves
+// first-seen order so citation numbering remains deterministic across runs.
+func dedupAppend(seen map[string]struct{}, ordered []tool.SearchItem, items []tool.SearchItem) []tool.SearchItem {
+	for _, it := range items {
+		if it.URL == "" {
+			continue
+		}
+		if _, dup := seen[it.URL]; dup {
+			continue
+		}
+		seen[it.URL] = struct{}{}
+		ordered = append(ordered, it)
 	}
-	return out
+	return ordered
 }
 
 func (r *Researcher) synthesize(ctx context.Context, question string, items []tool.SearchItem, upstream []*Findings, extraContext string) (*Findings, error) {
