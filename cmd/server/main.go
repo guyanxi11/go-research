@@ -17,6 +17,7 @@ import (
 	"github.com/yourname/go-research/internal/store/postgres"
 	"github.com/yourname/go-research/internal/tool"
 	"github.com/yourname/go-research/internal/tool/search"
+	"github.com/yourname/go-research/internal/tracing"
 )
 
 func main() {
@@ -26,6 +27,26 @@ func main() {
 	}
 
 	ctx := context.Background()
+
+	tracingShutdown, err := tracing.Init(ctx, tracing.Config{
+		Endpoint:    cfg.Tracing.Endpoint,
+		ServiceName: cfg.Tracing.ServiceName,
+		Insecure:    cfg.Tracing.Insecure,
+	})
+	if err != nil {
+		log.Fatalf("tracing: %v", err)
+	}
+	defer func() {
+		if err := tracingShutdown(context.Background()); err != nil {
+			hlog.Warnf("tracing shutdown: %v", err)
+		}
+	}()
+	if cfg.Tracing.Endpoint == "" {
+		hlog.Warnf("tracing: DISABLED (set OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4318 to enable)")
+	} else {
+		hlog.Infof("tracing: OTLP/HTTP -> %s (service=%s)", cfg.Tracing.Endpoint, cfg.Tracing.ServiceName)
+	}
+
 	llmClient, err := llm.New(ctx, cfg.LLM)
 	if err != nil {
 		log.Fatalf("llm: %v", err)

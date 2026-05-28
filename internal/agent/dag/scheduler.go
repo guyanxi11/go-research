@@ -7,7 +7,12 @@ import (
 	"sync"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/yourname/go-research/internal/metrics"
+	"github.com/yourname/go-research/internal/tracing"
 )
 
 // BackoffFn returns the delay before retrying after `attempt` failed attempts
@@ -322,12 +327,24 @@ func (s *Scheduler) execute(ctx context.Context, t task, out chan<- doneMsg, eve
 }
 
 // safeRun wraps RunFn so a panic in user code becomes an error instead of
-// killing the scheduler goroutine.
+// killing the scheduler goroutine, and stamps a per-node OTel span so the
+// trace timeline shows one bar per scatter-gather worker.
 func safeRun(ctx context.Context, n *Node, deps map[string]any) (result any, err error) {
+	ctx, span := tracing.Tracer(tracing.SubsystemDAG).Start(ctx, "dag.node "+n.ID,
+		trace.WithAttributes(
+			attribute.String("node.id", n.ID),
+			attribute.Int("node.deps", len(n.DependsOn)),
+		),
+	)
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("node %q panicked: %v", n.ID, r)
 		}
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+		span.End()
 	}()
 	return n.Run(ctx, deps)
 }

@@ -12,9 +12,13 @@ import (
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/yourname/go-research/internal/config"
 	"github.com/yourname/go-research/internal/metrics"
+	"github.com/yourname/go-research/internal/tracing"
 )
 
 // Client is the narrow surface the rest of the app depends on. Keeping it
@@ -49,24 +53,50 @@ func (c *Client) ModelName() string { return c.name }
 // drained — those two timings answer different questions and the stream
 // duration belongs to the caller.
 func (c *Client) Stream(ctx context.Context, msgs []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
+	ctx, span := tracing.Tracer(tracing.SubsystemLLM).Start(ctx, "llm.Stream",
+		trace.WithAttributes(
+			attribute.String("llm.model", c.name),
+			attribute.Int("llm.messages", len(msgs)),
+		),
+	)
 	start := time.Now()
 	r, err := c.model.Stream(ctx, msgs)
 	outcome := metrics.Outcome(err)
 	metrics.LLMRequestsTotal.WithLabelValues("stream", outcome).Inc()
 	metrics.LLMRequestDurationSeconds.WithLabelValues("stream", outcome).Observe(time.Since(start).Seconds())
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+	// We end the span at call-establishment so it captures TTFT-ish latency;
+	// the actual streaming duration belongs to the caller's span context.
+	span.End()
 	return r, err
 }
 
 // Generate is the non-streaming variant, useful for short utility prompts
 // (e.g. classification, summarisation) where streaming buys nothing.
 func (c *Client) Generate(ctx context.Context, msgs []*schema.Message) (*schema.Message, error) {
+	ctx, span := tracing.Tracer(tracing.SubsystemLLM).Start(ctx, "llm.Generate",
+		trace.WithAttributes(
+			attribute.String("llm.model", c.name),
+			attribute.Int("llm.messages", len(msgs)),
+		),
+	)
+	defer span.End()
 	start := time.Now()
 	out, err := c.model.Generate(ctx, msgs)
 	outcome := metrics.Outcome(err)
 	metrics.LLMRequestsTotal.WithLabelValues("generate", outcome).Inc()
 	metrics.LLMRequestDurationSeconds.WithLabelValues("generate", outcome).Observe(time.Since(start).Seconds())
-	if err == nil && out != nil {
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return out, err
+	}
+	if out != nil {
 		metrics.LLMOutputCharsTotal.WithLabelValues("generate").Add(float64(len(out.Content)))
+		span.SetAttributes(attribute.Int("llm.output_chars", len(out.Content)))
 	}
 	return out, err
 }

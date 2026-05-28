@@ -3,6 +3,12 @@ package server
 import hlog "github.com/cloudwego/hertz/pkg/common/hlog"
 
 func (s *Server) routes() {
+	// Tracing is outermost so the root span covers metrics middleware AND the
+	// handler. Every downstream agent/llm/search span will naturally parent to
+	// this one via context.Context. /metrics and /healthz produce noise-but-
+	// cheap spans; if that ever shows up in Jaeger as clutter, gate them here.
+	s.h.Use(httpTracing())
+
 	// HTTP request metrics are recorded for every route, including /healthz
 	// and /metrics, so dashboards reflect real traffic shape (including
 	// probes). Cardinality is bounded by FullPath() route templates.
