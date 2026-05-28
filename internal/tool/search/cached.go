@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"time"
 
+	"github.com/yourname/go-research/internal/metrics"
 	"github.com/yourname/go-research/internal/tool"
 )
 
@@ -50,25 +52,41 @@ func (c *Cached) Name() string        { return c.inner.Name() }
 func (c *Cached) Description() string { return c.inner.Description() }
 
 func (c *Cached) Call(ctx context.Context, argsJSON json.RawMessage) (string, error) {
+	start := time.Now()
+
 	var args tool.SearchArgs
 	if err := json.Unmarshal(argsJSON, &args); err != nil {
 		return "", fmt.Errorf("cached search: decode args: %w", err)
 	}
 	if args.Query == "" {
-		return c.inner.Call(ctx, argsJSON)
+		out, err := c.inner.Call(ctx, argsJSON)
+		c.recordMetric("miss", start, err)
+		return out, err
 	}
 
 	key := c.buildKey(args)
 	if hit, ok, err := c.cache.GetSearch(ctx, key); err == nil && ok {
+		c.recordMetric("hit", start, nil)
 		return hit, nil
 	}
 
 	out, err := c.inner.Call(ctx, argsJSON)
+	c.recordMetric("miss", start, err)
 	if err != nil {
 		return "", err
 	}
 	_ = c.cache.SetSearch(ctx, key, out)
 	return out, nil
+}
+
+func (c *Cached) recordMetric(cacheLabel string, start time.Time, err error) {
+	// cache="hit" wins over outcome — a hit can't fail. For miss we still
+	// record latency including the upstream provider call.
+	provider := c.namespace
+	metrics.SearchRequestsTotal.WithLabelValues(provider, cacheLabel).Inc()
+	metrics.SearchRequestDurationSeconds.WithLabelValues(provider, cacheLabel).
+		Observe(time.Since(start).Seconds())
+	_ = err // err is already reflected by upstream's own metrics / logs
 }
 
 // buildKey produces a stable opaque cache key.

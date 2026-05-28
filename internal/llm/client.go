@@ -7,12 +7,14 @@ package llm
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/cloudwego/eino-ext/components/model/openai"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
 
 	"github.com/yourname/go-research/internal/config"
+	"github.com/yourname/go-research/internal/metrics"
 )
 
 // Client is the narrow surface the rest of the app depends on. Keeping it
@@ -41,12 +43,30 @@ func (c *Client) ModelName() string { return c.name }
 
 // Stream sends the conversation and returns a reader that yields incremental
 // schema.Message deltas. Caller is responsible for closing the reader.
+//
+// We record latency at call-establishment time (i.e. when the upstream
+// accepts the request and returns a reader), NOT until the stream is fully
+// drained — those two timings answer different questions and the stream
+// duration belongs to the caller.
 func (c *Client) Stream(ctx context.Context, msgs []*schema.Message) (*schema.StreamReader[*schema.Message], error) {
-	return c.model.Stream(ctx, msgs)
+	start := time.Now()
+	r, err := c.model.Stream(ctx, msgs)
+	outcome := metrics.Outcome(err)
+	metrics.LLMRequestsTotal.WithLabelValues("stream", outcome).Inc()
+	metrics.LLMRequestDurationSeconds.WithLabelValues("stream", outcome).Observe(time.Since(start).Seconds())
+	return r, err
 }
 
 // Generate is the non-streaming variant, useful for short utility prompts
 // (e.g. classification, summarisation) where streaming buys nothing.
 func (c *Client) Generate(ctx context.Context, msgs []*schema.Message) (*schema.Message, error) {
-	return c.model.Generate(ctx, msgs)
+	start := time.Now()
+	out, err := c.model.Generate(ctx, msgs)
+	outcome := metrics.Outcome(err)
+	metrics.LLMRequestsTotal.WithLabelValues("generate", outcome).Inc()
+	metrics.LLMRequestDurationSeconds.WithLabelValues("generate", outcome).Observe(time.Since(start).Seconds())
+	if err == nil && out != nil {
+		metrics.LLMOutputCharsTotal.WithLabelValues("generate").Add(float64(len(out.Content)))
+	}
+	return out, err
 }

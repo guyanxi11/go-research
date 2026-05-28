@@ -1,0 +1,20 @@
+# Prometheus scrape config for go-research.
+#
+# The job runs from inside the docker-compose network and scrapes the host's
+# go-research process via host.docker.internal. On Linux docker-compose, also
+# uncomment `extra_hosts` in docker-compose.yml.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    service: go-research
+    env: local
+
+scrape_configs:
+  - job_name: go-research
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - host.docker.internal:8080
+        labels:
+          instance: localhost:8080

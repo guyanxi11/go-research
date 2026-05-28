@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/yourname/go-research/internal/metrics"
 )
 
 // BackoffFn returns the delay before retrying after `attempt` failed attempts
@@ -223,6 +225,22 @@ func (s *Scheduler) execute(ctx context.Context, t task, out chan<- doneMsg, eve
 		final   doneMsg
 	)
 	final.nodeID = n.ID
+
+	metrics.DAGNodesInFlight.Inc()
+	// Defer the outcome counter so every exit path (success / failure /
+	// limiter error / ctx cancel) reports exactly once.
+	defer func() {
+		metrics.DAGNodesInFlight.Dec()
+		outcome := "ok"
+		if final.err != nil {
+			if errors.Is(final.err, context.Canceled) || errors.Is(final.err, context.DeadlineExceeded) {
+				outcome = "canceled"
+			} else {
+				outcome = "failed"
+			}
+		}
+		metrics.DAGNodesTotal.WithLabelValues(outcome).Inc()
+	}()
 
 	for attempt := 1; attempt <= 1+n.MaxRetry; attempt++ {
 		select {

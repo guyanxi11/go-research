@@ -6,9 +6,11 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/yourname/go-research/internal/agent/critic"
 	"github.com/yourname/go-research/internal/llm"
+	"github.com/yourname/go-research/internal/metrics"
 	"github.com/yourname/go-research/internal/tool"
 )
 
@@ -50,7 +52,13 @@ func (r *Researcher) Research(
 	taskID, question string,
 	upstream []*Findings,
 	hook ProgressHook,
-) (*Findings, error) {
+) (out *Findings, retErr error) {
+	start := time.Now()
+	defer func() {
+		metrics.AgentStepDurationSeconds.
+			WithLabelValues("researcher", metrics.Outcome(retErr)).
+			Observe(time.Since(start).Seconds())
+	}()
 	items, err := r.collectSearchResults(ctx, taskID, question, r.opts, hook)
 	if err != nil {
 		return nil, err
