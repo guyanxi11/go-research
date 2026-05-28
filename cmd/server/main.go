@@ -51,16 +51,21 @@ func main() {
 	}
 
 	tools := tool.NewRegistry()
-	var searchTool tool.Tool
+	var (
+		searchTool   tool.Tool
+		searchNS     string
+	)
 	if cfg.TavilyAPIKey != "" {
 		searchTool = search.NewTavily(cfg.TavilyAPIKey, cfg.TavilySearchDepth)
+		searchNS = "tavily:" + cfg.TavilySearchDepth
 		hlog.Infof("search tool: tavily (depth=%s)", cfg.TavilySearchDepth)
 	} else {
 		searchTool = search.NewMock()
+		searchNS = "mock"
 		hlog.Warnf("search tool: MOCK (set TAVILY_API_KEY in .env for real search)")
 	}
 	if searchCache != nil {
-		searchTool = search.NewCached(searchTool, searchCache)
+		searchTool = search.NewCached(searchTool, searchCache, searchNS)
 	}
 	if err := tools.Register(searchTool); err != nil {
 		log.Fatalf("register search: %v", err)

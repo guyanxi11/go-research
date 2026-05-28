@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strconv"
+	"time"
 
 	"github.com/cloudwego/hertz/pkg/app"
 	hlog "github.com/cloudwego/hertz/pkg/common/hlog"
@@ -66,8 +67,21 @@ func (s *Server) handleResearch(ctx context.Context, c *app.RequestContext) {
 
 	// Pipeline runs in its own goroutine so the HTTP handler can fan events
 	// out to SSE without buffering them in memory first.
+	//
+	// A total deadline guards against hung LLM calls / runaway ReAct loops so
+	// the request never leaks goroutines forever. Disabled when configured
+	// to <= 0 (not recommended outside local debugging).
 	pipelineErr := make(chan error, 1)
-	pipelineCtx, cancel := context.WithCancel(ctx)
+	var (
+		pipelineCtx context.Context
+		cancel      context.CancelFunc
+	)
+	if s.cfg.ResearchTimeoutSeconds > 0 {
+		pipelineCtx, cancel = context.WithTimeout(ctx,
+			time.Duration(s.cfg.ResearchTimeoutSeconds)*time.Second)
+	} else {
+		pipelineCtx, cancel = context.WithCancel(ctx)
+	}
 	defer cancel()
 	go func() {
 		defer close(events)

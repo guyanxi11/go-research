@@ -30,6 +30,10 @@ func (s *Store) UpsertTask(ctx context.Context, sessionID string, rec store.Task
 	if len(cites) == 0 {
 		cites = json.RawMessage("[]")
 	}
+	// sort_order is intentionally INSERT-only: it is seeded once at EventPlan
+	// time and must not be overwritten by later node_started / node_finished
+	// upserts (which carry the Go zero value 0 and would otherwise corrupt
+	// the persisted plan order).
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO research_tasks (
 			session_id, task_id, question, status, findings, citations,
@@ -41,8 +45,7 @@ func (s *Store) UpsertTask(ctx context.Context, sessionID string, rec store.Task
 			findings = EXCLUDED.findings,
 			citations = EXCLUDED.citations,
 			elapsed_ms = EXCLUDED.elapsed_ms,
-			error_message = EXCLUDED.error_message,
-			sort_order = EXCLUDED.sort_order
+			error_message = EXCLUDED.error_message
 	`, sessionID, rec.TaskID, rec.Question, rec.Status,
 		rec.Findings, cites, rec.ElapsedMs, nullIfEmpty(rec.ErrorMessage), rec.SortOrder)
 	return err

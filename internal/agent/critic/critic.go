@@ -71,7 +71,17 @@ Return JSON only.`, question, markdown, citationCount)
 	if err != nil {
 		return nil, fmt.Errorf("critic llm: %w", err)
 	}
-	raw := strings.TrimSpace(out.Content)
+	return parseReview(out.Content, c.minScore)
+}
+
+// parseReview is the pure, unit-testable post-LLM step: extract JSON from a
+// (possibly noisy) raw response, clamp score to [1,10] and derive Pass from
+// minScore.
+func parseReview(raw string, minScore int) (*Review, error) {
+	if minScore <= 0 {
+		minScore = 6
+	}
+	raw = strings.TrimSpace(raw)
 	jsonStr := jsonutil.ExtractObject(raw)
 	if jsonStr == "" {
 		return nil, fmt.Errorf("critic: no JSON in response: %q", truncate(raw, 160))
@@ -89,10 +99,9 @@ Return JSON only.`, question, markdown, citationCount)
 	if partial.Score > 10 {
 		partial.Score = 10
 	}
-	pass := partial.Score >= c.minScore
 	return &Review{
 		Score:    partial.Score,
-		Pass:     pass,
+		Pass:     partial.Score >= minScore,
 		Feedback: strings.TrimSpace(partial.Feedback),
 	}, nil
 }
