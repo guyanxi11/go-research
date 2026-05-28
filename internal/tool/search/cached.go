@@ -8,8 +8,13 @@ import (
 	"fmt"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/yourname/go-research/internal/metrics"
 	"github.com/yourname/go-research/internal/tool"
+	"github.com/yourname/go-research/internal/tracing"
 )
 
 // cacheKeyVersion is bumped whenever the cached payload schema changes so old
@@ -52,27 +57,46 @@ func (c *Cached) Name() string        { return c.inner.Name() }
 func (c *Cached) Description() string { return c.inner.Description() }
 
 func (c *Cached) Call(ctx context.Context, argsJSON json.RawMessage) (string, error) {
+	ctx, span := tracing.Tracer(tracing.SubsystemSearch).Start(ctx, "search.Call",
+		trace.WithAttributes(attribute.String("search.provider", c.namespace)),
+	)
+	defer span.End()
 	start := time.Now()
 
 	var args tool.SearchArgs
 	if err := json.Unmarshal(argsJSON, &args); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return "", fmt.Errorf("cached search: decode args: %w", err)
 	}
+	span.SetAttributes(
+		attribute.Int("search.max_items", args.MaxItems),
+		attribute.Int("search.query_length", len(args.Query)),
+	)
 	if args.Query == "" {
 		out, err := c.inner.Call(ctx, argsJSON)
 		c.recordMetric("miss", start, err)
+		span.SetAttributes(attribute.String("search.cache", "miss"))
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
 		return out, err
 	}
 
 	key := c.buildKey(args)
 	if hit, ok, err := c.cache.GetSearch(ctx, key); err == nil && ok {
 		c.recordMetric("hit", start, nil)
+		span.SetAttributes(attribute.String("search.cache", "hit"))
 		return hit, nil
 	}
 
 	out, err := c.inner.Call(ctx, argsJSON)
 	c.recordMetric("miss", start, err)
+	span.SetAttributes(attribute.String("search.cache", "miss"))
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
 		return "", err
 	}
 	_ = c.cache.SetSearch(ctx, key, out)

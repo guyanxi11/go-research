@@ -8,10 +8,15 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/yourname/go-research/internal/agent/critic"
 	"github.com/yourname/go-research/internal/llm"
 	"github.com/yourname/go-research/internal/metrics"
 	"github.com/yourname/go-research/internal/tool"
+	"github.com/yourname/go-research/internal/tracing"
 )
 
 // Findings is what one Researcher produces for one sub-question.
@@ -54,7 +59,23 @@ func (r *Researcher) Research(
 	hook ProgressHook,
 ) (out *Findings, retErr error) {
 	start := time.Now()
+	ctx, span := tracing.Tracer(tracing.SubsystemResearcher).Start(ctx, "researcher.Research",
+		trace.WithAttributes(
+			attribute.String("task.id", taskID),
+			attribute.Int("upstream.count", len(upstream)),
+		),
+	)
 	defer func() {
+		if retErr != nil {
+			span.RecordError(retErr)
+			span.SetStatus(codes.Error, retErr.Error())
+		} else if out != nil {
+			span.SetAttributes(
+				attribute.Int("findings.citations", len(out.Citations)),
+				attribute.Int("findings.chars", len(out.Markdown)),
+			)
+		}
+		span.End()
 		metrics.AgentStepDurationSeconds.
 			WithLabelValues("researcher", metrics.Outcome(retErr)).
 			Observe(time.Since(start).Seconds())

@@ -12,6 +12,10 @@ import (
 	"fmt"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/yourname/go-research/internal/agent/dag"
 	"github.com/yourname/go-research/internal/agent/planner"
 	"github.com/yourname/go-research/internal/agent/researcher"
@@ -19,6 +23,7 @@ import (
 	"github.com/yourname/go-research/internal/llm"
 	"github.com/yourname/go-research/internal/metrics"
 	"github.com/yourname/go-research/internal/tool"
+	"github.com/yourname/go-research/internal/tracing"
 )
 
 // EventType is a string alias so the JSON wire format is human-readable.
@@ -122,6 +127,20 @@ func (e *Engine) Run(ctx context.Context, question string, events chan<- Event) 
 		return errors.New("orchestrator: missing dependency")
 	}
 
+	ctx, span := tracing.Tracer(tracing.SubsystemOrchestrator).Start(ctx, "orchestrator.Run",
+		// question.length keeps cardinality bounded (the raw question can
+		// contain PII so it stays out of attrs).
+		// Subtask count is appended once the planner returns.
+	)
+	span.SetAttributes(attribute.Int("question.length", len(question)))
+	defer func() {
+		if retErr != nil {
+			span.RecordError(retErr)
+			span.SetStatus(codes.Error, retErr.Error())
+		}
+		span.End()
+	}()
+
 	overallStart := time.Now()
 	chars := 0
 	// Record session-level metrics exactly once on every exit. status mirrors
@@ -146,13 +165,20 @@ func (e *Engine) Run(ctx context.Context, question string, events chan<- Event) 
 	// ---- Stage 1: Planner -----------------------------------------------
 	p := planner.New(e.deps.LLM)
 	stageStart := time.Now()
-	plan, err := p.Plan(ctx, question)
+	planCtx, planSpan := tracing.Tracer(tracing.SubsystemPlanner).Start(ctx, "planner.Plan")
+	plan, err := p.Plan(planCtx, question)
+	if err != nil {
+		planSpan.RecordError(err)
+		planSpan.SetStatus(codes.Error, err.Error())
+	}
+	planSpan.End()
 	metrics.AgentStepDurationSeconds.WithLabelValues("planner", metrics.Outcome(err)).
 		Observe(time.Since(stageStart).Seconds())
 	if err != nil {
 		emit(events, Event{Type: EventError, Payload: map[string]string{"stage": "planner", "error": err.Error()}})
 		return err
 	}
+	span.SetAttributes(attribute.Int("plan.subtasks", len(plan.Subtasks)))
 	emit(events, Event{Type: EventPlan, Payload: PlanPayload{Question: plan.Question, Subtasks: plan.Subtasks}})
 
 	// ---- Stage 2: DAG of Researchers -----------------------------------
@@ -237,7 +263,15 @@ func (e *Engine) Run(ctx context.Context, question string, events chan<- Event) 
 		}
 	}()
 
-	res, runErr := e.deps.Scheduler.Run(ctx, g, dagEvents)
+	schedCtx, schedSpan := tracing.Tracer(tracing.SubsystemDAG).Start(ctx, "scheduler.Run",
+		trace.WithAttributes(attribute.Int("nodes.total", len(plan.Subtasks))),
+	)
+	res, runErr := e.deps.Scheduler.Run(schedCtx, g, dagEvents)
+	if runErr != nil {
+		schedSpan.RecordError(runErr)
+		schedSpan.SetStatus(codes.Error, runErr.Error())
+	}
+	schedSpan.End()
 	close(dagEvents)
 	<-bridgeDone
 	if runErr != nil {
@@ -263,11 +297,20 @@ func (e *Engine) Run(ctx context.Context, question string, events chan<- Event) 
 	// ---- Stage 3: Writer (streaming) -----------------------------------
 	w := writer.New(e.deps.LLM)
 	writerStart := time.Now()
-	full, werr := w.Stream(ctx, question, findings, func(delta string) error {
+	writerCtx, writerSpan := tracing.Tracer(tracing.SubsystemWriter).Start(ctx, "writer.Stream",
+		trace.WithAttributes(attribute.Int("findings.count", len(findings))),
+	)
+	full, werr := w.Stream(writerCtx, question, findings, func(delta string) error {
 		chars += len(delta)
 		emit(events, Event{Type: EventWriterToken, Payload: WriterTokenPayload{Delta: delta}})
-		return ctx.Err()
+		return writerCtx.Err()
 	})
+	writerSpan.SetAttributes(attribute.Int("report.chars", chars))
+	if werr != nil {
+		writerSpan.RecordError(werr)
+		writerSpan.SetStatus(codes.Error, werr.Error())
+	}
+	writerSpan.End()
 	metrics.AgentStepDurationSeconds.WithLabelValues("writer", metrics.Outcome(werr)).
 		Observe(time.Since(writerStart).Seconds())
 	if werr != nil {

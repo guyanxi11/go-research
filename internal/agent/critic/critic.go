@@ -10,10 +10,14 @@ import (
 	"time"
 
 	"github.com/cloudwego/eino/schema"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/yourname/go-research/internal/agent/jsonutil"
 	"github.com/yourname/go-research/internal/llm"
 	"github.com/yourname/go-research/internal/metrics"
+	"github.com/yourname/go-research/internal/tracing"
 )
 
 // Review is the structured output of a Critic pass.
@@ -54,7 +58,24 @@ Scoring guide: 8-10 solid, 6-7 acceptable but thin, 1-5 major gaps or ignores so
 // and the configured minimum threshold.
 func (c *Critic) Review(ctx context.Context, question, markdown string, citationCount int) (rev *Review, retErr error) {
 	start := time.Now()
+	ctx, span := tracing.Tracer(tracing.SubsystemCritic).Start(ctx, "critic.Review",
+		trace.WithAttributes(
+			attribute.Int("findings.chars", len(markdown)),
+			attribute.Int("findings.citations", citationCount),
+			attribute.Int("critic.min_score", c.minScore),
+		),
+	)
 	defer func() {
+		if retErr != nil {
+			span.RecordError(retErr)
+			span.SetStatus(codes.Error, retErr.Error())
+		} else if rev != nil {
+			span.SetAttributes(
+				attribute.Int("review.score", rev.Score),
+				attribute.Bool("review.pass", rev.Pass),
+			)
+		}
+		span.End()
 		metrics.AgentStepDurationSeconds.
 			WithLabelValues("critic", metrics.Outcome(retErr)).
 			Observe(time.Since(start).Seconds())

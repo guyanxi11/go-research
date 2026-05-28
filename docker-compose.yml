@@ -47,6 +47,19 @@ services:
     # extra_hosts:
     #   - "host.docker.internal:host-gateway"
 
+  # Jaeger all-in-one receives OTLP/HTTP on :4318 and exposes the trace UI on
+  # :16686. Configure go-research with OTEL_EXPORTER_OTLP_ENDPOINT=localhost:4318
+  # (and OTEL_EXPORTER_OTLP_INSECURE=true for the no-TLS local setup).
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: go-research-jaeger
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"  # UI
+      - "4318:4318"    # OTLP/HTTP receiver
+
 volumes:
   postgres-data:
   redis-data:

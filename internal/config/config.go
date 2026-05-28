@@ -29,7 +29,16 @@ type Config struct {
 	TavilyAPIKey      string
 	TavilySearchDepth string
 
-	Agent AgentConfig
+	Agent   AgentConfig
+	Tracing TracingConfig
+}
+
+// TracingConfig configures the OpenTelemetry pipeline. Endpoint == "" is the
+// supported way to disable tracing (yields a global noop provider).
+type TracingConfig struct {
+	Endpoint    string // OTLP/HTTP endpoint, e.g. "localhost:4318"
+	ServiceName string
+	Insecure    bool
 }
 
 // AgentConfig tunes Phase 4 researcher ReAct + critic behaviour.
@@ -98,6 +107,11 @@ func Load() (*Config, error) {
 		},
 		TavilyAPIKey:      getEnv("TAVILY_API_KEY", ""),
 		TavilySearchDepth: getEnv("TAVILY_SEARCH_DEPTH", "basic"),
+		Tracing: TracingConfig{
+			Endpoint:    getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+			ServiceName: getEnv("OTEL_SERVICE_NAME", "go-research"),
+			Insecure:    getEnvBool("OTEL_EXPORTER_OTLP_INSECURE", true),
+		},
 		Agent: AgentConfig{
 			MaxSearchRounds:    getEnvInt("RESEARCH_MAX_SEARCH_ROUNDS", 2),
 			MaxFollowUpQueries: getEnvInt("RESEARCH_MAX_FOLLOWUP_QUERIES", 2),

@@ -60,11 +60,13 @@
   - 可选 `X-API-Key` 鉴权（设置 `API_KEY` 后启用，未设置保持本地开发友好）
   - `/api/research` 总超时（`RESEARCH_TIMEOUT_SECONDS`，默认 180s）防止 LLM 挂死泄漏 goroutine
   - SSE 客户端断开时取消上游 pipeline，事件 channel 主动 drain
-- **可观测性**（Phase 5.A）
+- **可观测性**（Phase 5.A + 5.B）
   - `GET /metrics` 暴露 Prometheus 指标，含 HTTP / LLM / 搜索 / DAG / Research session 5 类维度
   - 关键指标：`http_request_duration_seconds`、`llm_request_duration_seconds`、`search_requests_total{provider,cache}`、`dag_nodes_in_flight`、`research_session_duration_seconds{status}` 等
   - 标签全部低基数（状态码桶 / agent 名 / provider namespace / cache hit/miss），避免序列爆炸
-  - 一键起 Prometheus：`make up` 后访问 <http://localhost:9090>
+  - **OpenTelemetry 分布式追踪**：HTTP 入口起根 span，自动透传到 orchestrator / planner / scheduler / 每个 DAG node / researcher / critic / writer / LLM / search，单次 research 产生 20+ span
+  - 一键起 Prometheus + Jaeger：`make up` 后访问 <http://localhost:9090>（指标）/ <http://localhost:16686>（trace UI）
+  - W3C TraceContext 传播，未设 `OTEL_EXPORTER_OTLP_ENDPOINT` 时全局 noop，零运行时开销
 - **前端可视化**（`web/index.html`）
   - Tab 切换 Chat / Research 两种模式
   - Plan 树：每个子任务一张卡，状态点（pending/running/done/failed），实时耗时徽章
@@ -197,8 +199,8 @@ go mod edit -module github.com/<你的用户名>/go-research
 - [x] **Phase 3** Postgres 落库（plan / findings / report）+ Redis 搜索缓存 + `GET /api/research` 历史 API + History 页
 - [x] **Phase 4** Researcher 多轮 ReAct + Critic 评分回退 + `search_round` / `critic_review` SSE 事件 + 可选 X-API-Key 鉴权 + research 总超时
 - [x] **Phase 5.A** Prometheus 指标 + `/metrics` 端点 + docker-compose 一键起 Prometheus
-- [ ] **Phase 5.B** OpenTelemetry trace（orchestrator → planner → researcher → critic → writer）+ Tempo/Jaeger
-- [ ] **Phase 5.C** Grafana dashboard 一键 provision
+- [x] **Phase 5.B** OpenTelemetry trace（HTTP → orchestrator → planner / scheduler / 每个 DAG node → researcher → critic → writer → LLM / search）+ Jaeger all-in-one
+- [ ] **Phase 5.C** Grafana dashboard 一键 provision（指标 + trace 跨数据源关联）
 - [ ] **Phase 3.5** pgvector 向量记忆（RAG / 长期记忆）
 - [ ] **Phase 6** Docker 镜像 + 一键部署到 Railway/Fly.io + Demo 视频 + 技术博客
 
